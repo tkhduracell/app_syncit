@@ -4,6 +4,7 @@
     android:background="@color/holo_blue_light"
     android:orientation="horizontal"
     android:layout_width="match_parent"
+    android:id="@+id/discovery_player_layout"
     android:gravity="center"
     android:layout_height="100dp">
 
@@ -11,6 +12,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:padding="20dp"
+        android:enabled="false"
         android:text="Select song"
         android:id="@+id/discovery_select_btn" />
 
@@ -20,5 +22,6 @@
         android:textSize="20sp"
         android:padding="20dp"
         android:text="Play"
+        android:enabled="false"
         android:id="@+id/discovery_play_btn" />
 </LinearLayout>

@@ -9,7 +9,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.NetworkInfo;
 import android.net.Uri;
-import android.net.wifi.WpsInfo;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
@@ -18,8 +17,11 @@ import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Bundle;
 import android.util.Log;
 
-import java.net.InetAddress;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 
@@ -52,10 +54,10 @@ public class LaunchActivity extends Activity {
                 .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
                 .commit();
 
-        startWifiPeerDiscovery();
+        initWifiP2PReceivers();
     }
 
-    private void startWifiPeerDiscovery() {
+    private void initWifiP2PReceivers() {
         //  Indicates a change in the Wi-Fi P2P status.
         mIntentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
 
@@ -97,15 +99,19 @@ public class LaunchActivity extends Activity {
 
     }
 
+    public void connectToDevice(final WifiP2pDevice p2pDevice) {
+        mReceiver.connectToDevice(p2pDevice);
+    }
+
     public interface WifiP2PListener {
-        public void isWifiP2PEnabled(boolean enabled);
         public void onDiscoveringPeers();
-        public void updatePeerList(List<WifiP2pDevice> peers);
         public void onP2PNotSupported();
+        public void showWifiStateChange(int status, String statusText);
+        public void updatePeerList(List<WifiP2pDevice> peers);
         public void onGroupOwnerAvailable(WifiP2pInfo info);
     }
 
-    public static class WiFiDirectBroadcastReceiver extends BroadcastReceiver implements WifiP2pManager.PeerListListener, WifiP2pManager.ActionListener, WifiP2pManager.ConnectionInfoListener {
+    public static class WiFiDirectBroadcastReceiver extends BroadcastReceiver implements WifiP2pManager.PeerListListener, WifiP2pManager.ConnectionInfoListener {
 
         private final List<WifiP2pDevice> mPeers = new ArrayList<WifiP2pDevice>();
         private final WifiP2PListener mWifiP2PListener;
@@ -126,9 +132,15 @@ public class LaunchActivity extends Activity {
                 // the Activity.
                 int state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1);
 
-                if (state != WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
-                    mWifiP2PListener.isWifiP2PEnabled(false);
-                }
+                final String[] wifiStates = {
+                    "WIFI_STATE_DISABLING",
+                    "WIFI_STATE_DISABLED",
+                    "WIFI_STATE_ENABLING",
+                    "WIFI_STATE_ENABLED",
+                    "WIFI_STATE_UNKNOWN"
+                };
+
+                mWifiP2PListener.showWifiStateChange(state, wifiStates[state]);
 
                 Log.d(LOG_TAG, "WIFI_P2P_STATE_CHANGED_ACTION");
             } else if (WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(action)) {
@@ -136,28 +148,30 @@ public class LaunchActivity extends Activity {
                 // Request available mPeers from the wifi p2p manager. This is an
                 // asynchronous call and the calling activity is notified with a
                 // callback on PeerListListener.onPeersAvailable()
-                if (mWifiP2pManager != null) {
-                    mWifiP2pManager.requestPeers(mChannel, this);
-                }
-                Log.d(LOG_TAG, "WIFI_P2P_PEERS_CHANGED_ACTION - P2P peers changed");
+                mWifiP2pManager.requestPeers(mChannel, this);
+
+                Log.d(LOG_TAG, "WIFI_P2P_PEERS_CHANGED_ACTION - P2P peers changed, requesting peers");
 
             } else if (WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)) {
 
                 // Connection state changed!  We should probably do something about that
                 Log.d(LOG_TAG, "WIFI_P2P_CONNECTION_CHANGED_ACTION");
+                WifiP2pInfo wifiP2pInfo = WifiP2pInfo.class.cast(
+                    intent.getParcelableExtra(WifiP2pManager.EXTRA_WIFI_P2P_INFO)
+                );
 
                 NetworkInfo networkInfo = NetworkInfo.class.cast(
-                        intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO)
+                    intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO)
                 );
 
                 if (networkInfo.isConnected()) {
-
                     // We are connected with the other device, request connection
                     // info to find group owner IP
 
                     mWifiP2pManager.requestConnectionInfo(mChannel, this);
                 }
-
+                Log.d(LOG_TAG, "wifiInfo: " +wifiP2pInfo);
+                Log.d(LOG_TAG, "networkInfo: "+networkInfo);
             } else if (WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION.equals(action)) {
 
                 Log.d(LOG_TAG, "WIFI_P2P_THIS_DEVICE_CHANGED_ACTION");
@@ -166,48 +180,49 @@ public class LaunchActivity extends Activity {
 
         public void discoverPeers() {
             mWifiP2PListener.onDiscoveringPeers();
-            mWifiP2pManager.discoverPeers(mChannel, this);
+            mWifiP2pManager.discoverPeers(mChannel, new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    Log.d(LOG_TAG, "Discovering peers: onSuccess()");
+                    mWifiP2pManager.requestConnectionInfo(mChannel, WiFiDirectBroadcastReceiver.this);
+                }
+
+                @Override
+                public void onFailure(final int reason) {
+                    if (reason == WifiP2pManager.P2P_UNSUPPORTED) {
+                        mWifiP2PListener.onP2PNotSupported();
+                    } else if (reason == WifiP2pManager.BUSY) {
+                        Log.d(LOG_TAG, "Discovering peers: Busy busy doing nothing at all");
+                    } else {
+                        Log.d(LOG_TAG, "Discovering peers: onFailure(" + reason + ")");
+                    }
+                }
+            });
         }
 
         @Override
         public void onPeersAvailable(WifiP2pDeviceList peers) {
-            final int nbrPeers = peers.getDeviceList().size();
-            Log.d(LOG_TAG, "Discovering peers: found " + nbrPeers);
-            mPeers.clear();
-            mPeers.addAll(peers.getDeviceList());
-            mWifiP2PListener.updatePeerList(mPeers);
+            final Collection<WifiP2pDevice> deviceList = peers.getDeviceList();
+            final int nbrPeers = deviceList.size();
 
-            if (nbrPeers == 0) {
-                discoverPeers();
-            }
+            boolean isEqual = mPeers.containsAll(deviceList) && deviceList.containsAll(mPeers);
 
-            for (WifiP2pDevice peer : mPeers) {
-                final WifiP2pConfig config = new WifiP2pConfig();
-                config.deviceAddress = peer.deviceAddress;
-                config.wps.setup = WpsInfo.PBC;
+            Log.d(LOG_TAG, "Wifi-Direct: found " + nbrPeers + " peers, updating: " + !isEqual);
 
-                mWifiP2pManager.connect(mChannel, config, null);
-            }
-        }
+            if (!isEqual) {
+                mPeers.clear();
+                mPeers.addAll(deviceList);
+                mWifiP2PListener.updatePeerList(mPeers);
 
-        @Override
-        public void onSuccess() {
-            Log.d(LOG_TAG, "Discovering peers: onSuccess()");
-        }
-
-        @Override
-        public void onFailure(final int reason) {
-            if (reason == WifiP2pManager.P2P_UNSUPPORTED) {
-                mWifiP2PListener.onP2PNotSupported();
-            } else if (reason == WifiP2pManager.BUSY) {
-                Log.d(LOG_TAG, "Discovering peers: Busy busy doing nothing at all");
-            } else {
-                Log.d(LOG_TAG, "Discovering peers: onFailure(" + reason + ")");
+                if (nbrPeers == 0) {
+                    discoverPeers();
+                }
             }
         }
 
         @Override
         public void onConnectionInfoAvailable(final WifiP2pInfo info) {
+            Log.d(LOG_TAG, "onConnectionInfoAvailable: " + info.toString());
             // After the group negotiation, we can determine the group owner.
             if (info.groupFormed && info.isGroupOwner) {
                 // Do whatever tasks are specific to the group owner.
@@ -219,7 +234,31 @@ public class LaunchActivity extends Activity {
                 // you'll want to create a client thread that connects to the group
                 // owner.
                 mWifiP2PListener.onGroupOwnerAvailable(info);
+                Socket s = new Socket();
+                try {
+                    s.connect(new InetSocketAddress(info.groupOwnerAddress, 9090));
+                } catch (IOException e) {
+                    Log.e(LOG_TAG, "Failed to connect to host using post 9090", e);
+                }
+
+            } else {
+                // Group not created so do create
+                mWifiP2pManager.createGroup(mChannel, new WifiP2pManager.ActionListener() {
+                    @Override
+                    public void onSuccess() {
+                        Log.d(LOG_TAG, "Successfully created group");
+                    }
+
+                    @Override
+                    public void onFailure(final int reason) {
+                        Log.d(LOG_TAG, "Error created group: " + reason);
+                    }
+                });
             }
+        }
+
+        public void connectToDevice(final WifiP2pDevice p2pDevice) {
+
         }
     }
 

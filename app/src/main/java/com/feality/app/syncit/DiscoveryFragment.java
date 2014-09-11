@@ -5,27 +5,20 @@ import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
-import android.net.wifi.WpsInfo;
-import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pInfo;
-import android.net.wifi.p2p.WifiP2pManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.AccelerateDecelerateInterpolator;
-import android.view.animation.Animation;
-import android.view.animation.DecelerateInterpolator;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
-import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -36,7 +29,6 @@ import com.todddavies.components.progressbar.ProgressWheel;
 
 import java.io.IOException;
 import java.net.InetAddress;
-import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -58,6 +50,7 @@ public class DiscoveryFragment extends SmarterFragment implements LaunchActivity
     private Button mPlayButton;
     private MediaPlayer mMediaPlayer;
     private LaunchActivity mActivity;
+    private TextView mTitleView;
 
     @Override
     public View onCreateView(final LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -91,6 +84,7 @@ public class DiscoveryFragment extends SmarterFragment implements LaunchActivity
         });
 
         mMediaPlayer = new MediaPlayer();
+
         mPlayButton = get(v, R.id.discovery_play_btn, Button.class);
         mPlayButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -105,6 +99,8 @@ public class DiscoveryFragment extends SmarterFragment implements LaunchActivity
                 }
             }
         });
+
+        mTitleView = get(v, R.id.discovery_title, TextView.class);
 
         return v;
     }
@@ -177,14 +173,12 @@ public class DiscoveryFragment extends SmarterFragment implements LaunchActivity
     }
 
     @Override
-    public void isWifiP2PEnabled(boolean enabled) {
-        String text = enabled ? "Wifi enabled" : "Wifi disabled";
-        mProgressWheel.setText(text);
-        if (enabled) {
-            if (mProgressWheel.isSpinning()) {
-                mProgressWheel.spin();
-            }
+    public void showWifiStateChange(int state, String stateText) {
+        if (state == 2 || state == 3) {
+            // We are cool
         } else {
+            mProgressWheel.setText(stateText);
+            mViewSwitcher.setDisplayedChild(CHILD_FIRST);
             mProgressWheel.stopSpinning();
         }
     }
@@ -218,8 +212,16 @@ public class DiscoveryFragment extends SmarterFragment implements LaunchActivity
     @Override
     public void onGroupOwnerAvailable(final WifiP2pInfo info) {
         // InetAddress from WifiP2pInfo struct.
-        InetAddress groupOwnerAddress = info.groupOwnerAddress;
         Log.d(LOG_TAG, "groupOwnerAddress:" + info);
+
+        boolean isGO = info.isGroupOwner;
+
+        String mode = getString(isGO ?
+        R.string.discovery_title_master : R.string.discovery_title_slave);
+        mTitleView.setText(getString(R.string.discovery_title).concat(" ").concat(mode));
+
+        mPlayButton.setEnabled(isGO);
+        mSelectButton.setEnabled(isGO);
     }
 
     private void showLoadingSpinner() {
@@ -235,22 +237,27 @@ public class DiscoveryFragment extends SmarterFragment implements LaunchActivity
 
     @Override
     public void onItemClick(final AdapterView<?> parent, final View view, final int position, final long id) {
-        final WifiP2pDevice item = mPeerListAdapter.getItem(position);
+        final WifiP2pDevice p2pDevice = mPeerListAdapter.getItem(position);
+        parent.setSelection(position);
 
         get(view, R.id.inflate_peer_item_switcher, ViewSwitcher.class).showNext();
+        get(view, R.id.inflate_peer_item_progress, ProgressBar.class).setIndeterminate(true);
 
-        final ProgressBar progressBar = get(view, R.id.inflate_peer_item_progress, ProgressBar.class);
+        mActivity.connectToDevice(p2pDevice);
 
+        /*
         progressBar.clearAnimation();
-
         ObjectAnimator animation = ObjectAnimator.ofInt(progressBar, "progress", 0, progressBar.getMax());
         animation.setDuration(1000); // 1 second
         animation.setInterpolator(new AccelerateDecelerateInterpolator());
         animation.setRepeatMode(ValueAnimator.REVERSE);
         animation.setRepeatCount(ValueAnimator.INFINITE);
         animation.start();
+        */
 
     }
+
+
 
     private class PeerListAdapter extends ArrayAdapter<WifiP2pDevice> {
 
@@ -275,7 +282,8 @@ public class DiscoveryFragment extends SmarterFragment implements LaunchActivity
             final String text1 = String.format("%s", device.deviceName);
             get(v, R.id.inflate_peer_item_text1, TextView.class).setTextKeepState(text1);
 
-            final String text2 = String.format("%s", device.deviceAddress);
+            final String hostOwnerPostfix = device.isGroupOwner() ? " (host)" : "";
+            final String text2 = String.format("%s%s", device.deviceAddress, hostOwnerPostfix);
             get(v, R.id.inflate_peer_item_text2, TextView.class).setTextKeepState(text2);
 
             return v;

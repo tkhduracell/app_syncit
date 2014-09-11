@@ -4,6 +4,9 @@
     <string name="app_name">SyncIt</string>
     <string name="hello_world">Hello world!</string>
     <string name="action_settings">Settings</string>
-    <string name="waiting_for_peers">Waiting for peers</string>
+    <string name="waiting_for_peers">…looking for peers…</string>
+    <string name="discovery_title">Discovered peers</string>
+    <string name="discovery_title_slave"> (slave)</string>
+    <string name="discovery_title_master"> (master)</string>
 
 </resources>
