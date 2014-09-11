@@ -3,4 +3,9 @@
     <color name="light_green">#ff93e08e</color>
     <color name="light_grey">#DDD</color>
 
+    <color name="holo_blue">#0097D6</color>
+    <color name="holo_blue_light">#330097D6</color>
+
+    <color name="not_really_black">#222</color>
+
 </resources>
