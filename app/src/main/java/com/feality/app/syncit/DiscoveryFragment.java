@@ -1,7 +1,5 @@
 package com.feality.app.syncit;
 
-import android.animation.ObjectAnimator;
-import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
@@ -14,11 +12,9 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.animation.AccelerateDecelerateInterpolator;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
-import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -28,14 +24,13 @@ import android.widget.ViewSwitcher;
 import com.todddavies.components.progressbar.ProgressWheel;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Created by Filip on 2014-09-10.
  */
-public class DiscoveryFragment extends SmarterFragment implements LaunchActivity.WifiP2PListener, AdapterView.OnItemClickListener {
+public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListener, AdapterView.OnItemClickListener {
 
     private static final String LOG_TAG = DiscoveryFragment.class.getSimpleName();
 
@@ -214,14 +209,17 @@ public class DiscoveryFragment extends SmarterFragment implements LaunchActivity
         // InetAddress from WifiP2pInfo struct.
         Log.d(LOG_TAG, "groupOwnerAddress:" + info);
 
-        boolean isGO = info.isGroupOwner;
+        if (info.groupFormed) {
+            final boolean isGo = info.isGroupOwner;
+            String mode = getString(isGo ?
+                    R.string.discovery_title_master : R.string.discovery_title_slave);
+            mTitleView.setText(getString(R.string.discovery_title).concat(" ").concat(mode));
+        } else {
+            mTitleView.setText(getString(R.string.discovery_title).concat(" ").concat("(no owner yet)"));
+        }
 
-        String mode = getString(isGO ?
-        R.string.discovery_title_master : R.string.discovery_title_slave);
-        mTitleView.setText(getString(R.string.discovery_title).concat(" ").concat(mode));
-
-        mPlayButton.setEnabled(isGO);
-        mSelectButton.setEnabled(isGO);
+        mPlayButton.setEnabled(info.groupFormed);
+        mSelectButton.setEnabled(info.groupFormed);
     }
 
     private void showLoadingSpinner() {
@@ -243,7 +241,7 @@ public class DiscoveryFragment extends SmarterFragment implements LaunchActivity
         get(view, R.id.inflate_peer_item_switcher, ViewSwitcher.class).showNext();
         get(view, R.id.inflate_peer_item_progress, ProgressBar.class).setIndeterminate(true);
 
-        mActivity.connectToDevice(p2pDevice);
+        //mActivity.connectToDevice(p2pDevice);
 
         /*
         progressBar.clearAnimation();

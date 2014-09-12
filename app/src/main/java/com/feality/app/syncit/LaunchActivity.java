@@ -9,7 +9,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.NetworkInfo;
 import android.net.Uri;
-import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
 import android.net.wifi.p2p.WifiP2pInfo;
@@ -17,18 +16,16 @@ import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Bundle;
 import android.util.Log;
 
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
 
-public class LaunchActivity extends Activity {
+public class LaunchActivity extends Activity implements WifiP2pActionListener {
 
     private static final String LOG_TAG = LaunchActivity.class.getSimpleName();
     public static final String FRAGMENT_DISCOVERY = "fragment_discovery";
+    public static final int DEFAULT_PORT = 8081;
 
     private final IntentFilter mIntentFilter = new IntentFilter();
 
@@ -83,7 +80,7 @@ public class LaunchActivity extends Activity {
         final DiscoveryFragment fragment = DiscoveryFragment.class.cast(
                 mFragmentManager.findFragmentByTag(FRAGMENT_DISCOVERY));
 
-        mReceiver = new WiFiDirectBroadcastReceiver(fragment, mP2PManager, mChannel);
+        mReceiver = new WiFiDirectBroadcastReceiver(mP2PManager, mChannel, fragment, this);
         registerReceiver(mReceiver, mIntentFilter);
 
         mReceiver.discoverPeers();
@@ -95,33 +92,54 @@ public class LaunchActivity extends Activity {
         unregisterReceiver(mReceiver);
     }
 
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        Intent serverIntent = new Intent(this, SyncServer.class);
+        serverIntent.putExtra(SyncServer.INTENT_EXTRA_ACTION, SyncServer.ACTION_STOP);
+        startService(serverIntent);
+
+        Intent clientIntent = new Intent(this, SyncClient.class);
+        clientIntent.putExtra(SyncClient.INTENT_EXTRA_ACTION, SyncClient.ACTION_STOP);
+        startService(clientIntent);
+    }
+
     public void distributeData(final Uri uri) {
-
+        Intent connectIntent = new Intent(this, SyncClient.class);
+        connectIntent.putExtra(SyncClient.INTENT_EXTRA_ACTION, SyncClient.ACTION_SEND);
+        connectIntent.putExtra(SyncClient.INTENT_EXTRA_FILE, uri);
+        startService(connectIntent);
     }
 
-    public void connectToDevice(final WifiP2pDevice p2pDevice) {
-        mReceiver.connectToDevice(p2pDevice);
-    }
-
-    public interface WifiP2PListener {
-        public void onDiscoveringPeers();
-        public void onP2PNotSupported();
-        public void showWifiStateChange(int status, String statusText);
-        public void updatePeerList(List<WifiP2pDevice> peers);
-        public void onGroupOwnerAvailable(WifiP2pInfo info);
+    @Override
+    public void onGroupOwnerAvailable(final WifiP2pInfo info) {
+        if (info.isGroupOwner) {
+            Intent serverIntent = new Intent(this, SyncServer.class);
+            serverIntent.putExtra(SyncServer.INTENT_EXTRA_ACTION, SyncServer.ACTION_START);
+            serverIntent.putExtra(SyncServer.INTENT_EXTRA_PORT, DEFAULT_PORT);
+            startService(serverIntent);
+        } else {
+            Intent clientIntent = new Intent(this, SyncClient.class);
+            clientIntent.putExtra(SyncClient.INTENT_EXTRA_ACTION, SyncClient.ACTION_START);
+            clientIntent.putExtra(SyncClient.INTENT_EXTRA_ADDRESS, info.groupOwnerAddress);
+            clientIntent.putExtra(SyncClient.INTENT_EXTRA_PORT, DEFAULT_PORT);
+            startService(clientIntent);
+        }
     }
 
     public static class WiFiDirectBroadcastReceiver extends BroadcastReceiver implements WifiP2pManager.PeerListListener, WifiP2pManager.ConnectionInfoListener {
 
         private final List<WifiP2pDevice> mPeers = new ArrayList<WifiP2pDevice>();
-        private final WifiP2PListener mWifiP2PListener;
+        private final WifiP2pUiListener mWifiP2pUiListener;
         private final WifiP2pManager mWifiP2pManager;
         private final WifiP2pManager.Channel mChannel;
+        private final WifiP2pActionListener mWifiP2pActionListener;
 
-        private WiFiDirectBroadcastReceiver(WifiP2PListener mWifiP2PListener, WifiP2pManager mWifiP2pManager, WifiP2pManager.Channel mChannel) {
-            this.mWifiP2PListener = mWifiP2PListener;
-            this.mWifiP2pManager = mWifiP2pManager;
-            this.mChannel = mChannel;
+        private WiFiDirectBroadcastReceiver(WifiP2pManager wifiP2pManager, WifiP2pManager.Channel channel, WifiP2pUiListener uiListener, WifiP2pActionListener actionListener) {
+            this.mWifiP2pManager = wifiP2pManager;
+            this.mChannel = channel;
+            this.mWifiP2pUiListener = uiListener;
+            this.mWifiP2pActionListener = actionListener;
         }
 
         @Override
@@ -140,7 +158,7 @@ public class LaunchActivity extends Activity {
                     "WIFI_STATE_UNKNOWN"
                 };
 
-                mWifiP2PListener.showWifiStateChange(state, wifiStates[state]);
+                mWifiP2pUiListener.showWifiStateChange(state, wifiStates[state]);
 
                 Log.d(LOG_TAG, "WIFI_P2P_STATE_CHANGED_ACTION");
             } else if (WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(action)) {
@@ -172,6 +190,12 @@ public class LaunchActivity extends Activity {
                 }
                 Log.d(LOG_TAG, "wifiInfo: " +wifiP2pInfo);
                 Log.d(LOG_TAG, "networkInfo: "+networkInfo);
+
+                if (wifiP2pInfo.groupFormed) {
+                    mWifiP2pUiListener.onGroupOwnerAvailable(wifiP2pInfo);
+                    //mWifiP2pActionListener.onGroupOwnerAvailable(wifiP2pInfo);
+                }
+
             } else if (WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION.equals(action)) {
 
                 Log.d(LOG_TAG, "WIFI_P2P_THIS_DEVICE_CHANGED_ACTION");
@@ -179,7 +203,7 @@ public class LaunchActivity extends Activity {
         }
 
         public void discoverPeers() {
-            mWifiP2PListener.onDiscoveringPeers();
+            mWifiP2pUiListener.onDiscoveringPeers();
             mWifiP2pManager.discoverPeers(mChannel, new WifiP2pManager.ActionListener() {
                 @Override
                 public void onSuccess() {
@@ -190,7 +214,7 @@ public class LaunchActivity extends Activity {
                 @Override
                 public void onFailure(final int reason) {
                     if (reason == WifiP2pManager.P2P_UNSUPPORTED) {
-                        mWifiP2PListener.onP2PNotSupported();
+                        mWifiP2pUiListener.onP2PNotSupported();
                     } else if (reason == WifiP2pManager.BUSY) {
                         Log.d(LOG_TAG, "Discovering peers: Busy busy doing nothing at all");
                     } else {
@@ -212,7 +236,7 @@ public class LaunchActivity extends Activity {
             if (!isEqual) {
                 mPeers.clear();
                 mPeers.addAll(deviceList);
-                mWifiP2PListener.updatePeerList(mPeers);
+                mWifiP2pUiListener.updatePeerList(mPeers);
 
                 if (nbrPeers == 0) {
                     discoverPeers();
@@ -228,19 +252,14 @@ public class LaunchActivity extends Activity {
                 // Do whatever tasks are specific to the group owner.
                 // One common case is creating a server thread and accepting
                 // incoming connections.
-                mWifiP2PListener.onGroupOwnerAvailable(info);
+                mWifiP2pUiListener.onGroupOwnerAvailable(info);
+                mWifiP2pActionListener.onGroupOwnerAvailable(info);
             } else if (info.groupFormed) {
                 // The other device acts as the client. In this case,
                 // you'll want to create a client thread that connects to the group
                 // owner.
-                mWifiP2PListener.onGroupOwnerAvailable(info);
-                Socket s = new Socket();
-                try {
-                    s.connect(new InetSocketAddress(info.groupOwnerAddress, 9090));
-                } catch (IOException e) {
-                    Log.e(LOG_TAG, "Failed to connect to host using post 9090", e);
-                }
-
+                mWifiP2pUiListener.onGroupOwnerAvailable(info);
+                mWifiP2pActionListener.onGroupOwnerAvailable(info);
             } else {
                 // Group not created so do create
                 mWifiP2pManager.createGroup(mChannel, new WifiP2pManager.ActionListener() {
@@ -257,9 +276,6 @@ public class LaunchActivity extends Activity {
             }
         }
 
-        public void connectToDevice(final WifiP2pDevice p2pDevice) {
-
-        }
     }
 
 }
