@@ -41,9 +41,6 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
     private ViewSwitcher mViewSwitcher;
     private ProgressWheel mProgressWheel;
     private PeerListAdapter mPeerListAdapter;
-    private Button mSelectButton;
-    private Button mPlayButton;
-    private MediaPlayer mMediaPlayer;
     private LaunchActivity mActivity;
     private TextView mTitleView;
 
@@ -70,31 +67,6 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
         mListView.setAdapter(mPeerListAdapter);
         mListView.setOnItemClickListener(this);
 
-        mSelectButton = get(v, R.id.discovery_select_btn, Button.class);
-        mSelectButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(final View v) {
-                showFileChooser();
-            }
-        });
-
-        mMediaPlayer = new MediaPlayer();
-
-        mPlayButton = get(v, R.id.discovery_play_btn, Button.class);
-        mPlayButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(final View v) {
-                if (mMediaPlayer.isPlaying()){
-                    mMediaPlayer.pause();
-                    mMediaPlayer.seekTo(0);
-                    mPlayButton.setText("Play");
-                } else {
-                    mMediaPlayer.start();
-                    mPlayButton.setText("Stop");
-                }
-            }
-        });
-
         mTitleView = get(v, R.id.discovery_title, TextView.class);
 
         return v;
@@ -106,74 +78,13 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
         super.onAttach(activity);
     }
 
-    private static final int FILE_SELECT_CODE = 0;
-
-    private void showFileChooser() {
-        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-        intent.setType("*/*");
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-
-        try {
-            startActivityForResult(
-                    Intent.createChooser(intent, "Select a File to Upload"),
-                    FILE_SELECT_CODE);
-        } catch (android.content.ActivityNotFoundException ex) {
-            // Potentially direct the user to the Market with a Dialog
-            Toast.makeText(getActivity(), "Please install a File Manager", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        switch (requestCode) {
-            case FILE_SELECT_CODE:
-                if (resultCode == Activity.RESULT_OK) {
-                    // Get the Uri of the selected file
-                    Uri uri = data.getData();
-                    Log.d(LOG_TAG, "File Uri: " + uri.toString());
-                    // Get the path
-                    try {
-                        onFileSelected(uri);
-                    } catch (IOException e) {
-                        Log.wtf(LOG_TAG, "Unable to read file: " + uri, e);
-                    }
-
-                }
-                break;
-        }
-        super.onActivityResult(requestCode, resultCode, data);
-    }
-
-    @Override
-    public void onDestroy() {
-        mMediaPlayer.release();
-        mMediaPlayer = null;
-        super.onDestroy();
-    }
-
-    private void onFileSelected(final Uri uri) throws IOException {
-        mPlayButton.setText("Play");
-        mSelectButton.setText(uri.getPath());
-
-        if (mMediaPlayer.isPlaying()){
-            mMediaPlayer.stop();
-            mMediaPlayer.reset();
-        }
-
-        mMediaPlayer.setDataSource(getActivity(), uri);
-        mMediaPlayer.prepare();
-        mPlayButton.setEnabled(true);
-
-        mActivity.distributeData(uri);
-    }
-
     @Override
     public void showWifiStateChange(int state, String stateText) {
         if (state == 2 || state == 3) {
             // We are cool
         } else {
-            mProgressWheel.setText(stateText);
             mViewSwitcher.setDisplayedChild(CHILD_FIRST);
+            mProgressWheel.setText(stateText);
             mProgressWheel.stopSpinning();
         }
     }
@@ -190,7 +101,11 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
     public void updatePeerList(List<WifiP2pDevice> peers) {
         mPeerListAdapter.swapPeers(peers);
         mPeerListAdapter.notifyDataSetChanged();
-        showPeerList();
+        if (peers.isEmpty()) {
+            showLoadingSpinner();
+        } else {
+            showPeerList();
+        }
     }
 
     private void showPeerList() {
@@ -205,22 +120,7 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
     }
 
     @Override
-    public void onGroupOwnerAvailable(final WifiP2pInfo info) {
-        // InetAddress from WifiP2pInfo struct.
-        Log.d(LOG_TAG, "groupOwnerAddress:" + info);
-
-        if (info.groupFormed) {
-            final boolean isGo = info.isGroupOwner;
-            String mode = getString(isGo ?
-                    R.string.discovery_title_master : R.string.discovery_title_slave);
-            mTitleView.setText(getString(R.string.discovery_title).concat(" ").concat(mode));
-        } else {
-            mTitleView.setText(getString(R.string.discovery_title).concat(" ").concat("(no owner yet)"));
-        }
-
-        mPlayButton.setEnabled(info.groupFormed);
-        mSelectButton.setEnabled(info.groupFormed);
-    }
+    public void onGroupOwnerAvailable(final WifiP2pInfo info) {}
 
     private void showLoadingSpinner() {
         mViewSwitcher.setDisplayedChild(CHILD_FIRST);
@@ -238,10 +138,10 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
         final WifiP2pDevice p2pDevice = mPeerListAdapter.getItem(position);
         parent.setSelection(position);
 
-        get(view, R.id.inflate_peer_item_switcher, ViewSwitcher.class).showNext();
+        get(view, R.id.inflate_peer_item_switcher, ViewSwitcher.class).setDisplayedChild(CHILD_SECOND);
         get(view, R.id.inflate_peer_item_progress, ProgressBar.class).setIndeterminate(true);
 
-        //mActivity.connectToDevice(p2pDevice);
+        mActivity.onDeviceSelected(p2pDevice);
 
         /*
         progressBar.clearAnimation();
@@ -252,7 +152,6 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
         animation.setRepeatCount(ValueAnimator.INFINITE);
         animation.start();
         */
-
     }
 
 
@@ -280,8 +179,7 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
             final String text1 = String.format("%s", device.deviceName);
             get(v, R.id.inflate_peer_item_text1, TextView.class).setTextKeepState(text1);
 
-            final String hostOwnerPostfix = device.isGroupOwner() ? " (host)" : "";
-            final String text2 = String.format("%s%s", device.deviceAddress, hostOwnerPostfix);
+            final String text2 = String.format("%s", device.deviceAddress);
             get(v, R.id.inflate_peer_item_text2, TextView.class).setTextKeepState(text2);
 
             return v;

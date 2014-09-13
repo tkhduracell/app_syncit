@@ -11,6 +11,9 @@ import java.io.IOException;
 import java.net.BindException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketAddress;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Created by Filip on 2014-09-12.
@@ -24,8 +27,8 @@ public class SyncServer extends IntentService {
     public static final int ACTION_START = 0;
     public static final int ACTION_STOP = 1;
 
-    private int mPort;
-    private ServerSocket mServerSocket;
+    private int mState = ACTION_STOP;
+    private Thread mAcceptThread;
 
     public SyncServer() {
         super(LOG_TAG);
@@ -38,44 +41,38 @@ public class SyncServer extends IntentService {
 
         switch (action) {
             case ACTION_START:
-                mPort = intent.getIntExtra(INTENT_EXTRA_PORT, -1);
-                try {
-                    mServerSocket = new ServerSocket(mPort);
-                } catch (BindException e) {
-                    Log.w(LOG_TAG, "Server already running on port: " + mPort);
-                } catch (IOException e) {
-                    Log.e(LOG_TAG, "Unable to start server on port: " + mPort, e);
-                }
-                while(!mServerSocket.isClosed()) {
-                    try {
-                        new Thread(new EchoServiceRunnable(mServerSocket.accept())).start();
-                    } catch (IOException e) {
-                        Log.e(LOG_TAG, "ServerSocket accept error", e);
-                    }
-                }
-
+                if(ACTION_START == mState) break;
+                final int port = intent.getIntExtra(INTENT_EXTRA_PORT, -1);
+                mAcceptThread = new Thread(new AcceptService(port));
+                mAcceptThread.setName("AcceptService-" + port);
+                mAcceptThread.start();
                 break;
             case ACTION_STOP:
-                try {
-                    mServerSocket.close();
-                } catch (IOException e) {
-                    Log.e(LOG_TAG, "Unable to close server on port: " + mPort, e);
-                }
+                if(ACTION_STOP == mState) break;
                 stopSelf();
                 break;
             default:
                 Log.wtf(LOG_TAG, "Unknown action: " + action);
                 break;
         }
+        mState = action;
+    }
 
+    @Override
+    public void onDestroy() {
+        mAcceptThread.interrupt();
+        mAcceptThread = null;
+        mState = ACTION_START;
+        super.onDestroy();
     }
 
     private static class EchoServiceRunnable implements Runnable {
-
-        private Socket mSocket;
+        private final Socket mSocket;
+        private final SocketAddress mRemoteSocketAddress;
 
         public EchoServiceRunnable(final Socket socket) {
             mSocket = socket;
+            mRemoteSocketAddress = socket.getRemoteSocketAddress();
         }
 
         @Override
@@ -84,17 +81,78 @@ public class SyncServer extends IntentService {
                 DataInputStream dis = new DataInputStream(mSocket.getInputStream());
                 DataOutputStream dos = new DataOutputStream(mSocket.getOutputStream());
 
-                while (!mSocket.isClosed()) {
-                    long time = dis.readLong();
-                    Log.w(LOG_TAG, "Received time: " + time);
-                    dos.writeLong(System.currentTimeMillis());
+                try {
+                    while (!Thread.interrupted() && !mSocket.isClosed()) {
+                        long time = dis.readLong();
+                        Log.w(LOG_TAG, "Received time: " + time);
+                        dos.writeLong(System.currentTimeMillis());
+                    }
+                } catch (IOException e) {
+                    Log.e(LOG_TAG, "Unable to echo time: " + mRemoteSocketAddress, e);
                 }
 
             } catch (IOException e) {
-                e.printStackTrace();
+                Log.e(LOG_TAG, "Unable to setup streams: " + mRemoteSocketAddress, e);
+            }
+
+            try {
+                mSocket.close();
+            } catch (IOException e) {
+                Log.e(LOG_TAG, "Unable to close socket: " + mRemoteSocketAddress, e);
             }
 
         }
 
+    }
+
+    private static class AcceptService implements Runnable {
+
+        private final List<Thread> mThreadList = new ArrayList<Thread>();
+        private final int mPort;
+
+        private ServerSocket mServerSocket;
+
+        public AcceptService(final int port) {
+            mPort = port;
+        }
+
+        @Override
+        public void run() {
+            if (mServerSocket != null && !mServerSocket.isClosed()) {
+                try {
+                    mServerSocket.close();
+                } catch (IOException e) {
+                    Log.e(LOG_TAG, "Unable to close running server on port: " + mPort, e);
+                }
+            }
+
+            try {
+                mServerSocket = new ServerSocket(mPort);
+            } catch (BindException e) {
+                Log.w(LOG_TAG, "Server already running on port: " + mPort);
+            } catch (IOException e) {
+                Log.e(LOG_TAG, "Unable to start server on port: " + mPort, e);
+            }
+
+            while(!Thread.interrupted() && mServerSocket!= null && !mServerSocket.isClosed()) {
+                try {
+                    Log.d(LOG_TAG, "Waiting for connections on " + mServerSocket.getLocalSocketAddress());
+                    final Socket socket = mServerSocket.accept();
+                    EchoServiceRunnable echoServiceRunnable = new EchoServiceRunnable(socket);
+                    Thread thread = new Thread(echoServiceRunnable);
+                    thread.setName("EchoService: " + socket.getRemoteSocketAddress());
+                    thread.start();
+                    mThreadList.add(thread);
+                } catch (IOException e) {
+                    Log.e(LOG_TAG, "ServerSocket error accepting connection", e);
+                }
+            }
+
+            for (Thread thread : mThreadList) {
+                Log.d(LOG_TAG, "Stopping "+ thread.toString());
+                thread.interrupt();
+            }
+            mThreadList.clear();
+        }
     }
 }

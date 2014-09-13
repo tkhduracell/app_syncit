@@ -9,6 +9,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.net.SocketAddress;
 import java.net.UnknownHostException;
 
 /**
@@ -16,9 +17,9 @@ import java.net.UnknownHostException;
  */
 public class SyncClient extends IntentService {
 
-    public static final int ACTION_START = 0;
-    public static final int ACTION_STOP = 1;
-    public static final int ACTION_SEND = 2;
+    public static final int ACTION_START = 10;
+    public static final int ACTION_STOP = 100;
+    public static final int ACTION_SEND = 1000;
 
     public static final String INTENT_EXTRA_ACTION = "INTENT_EXTRA_ACTION";
     public static final String INTENT_EXTRA_ADDRESS = "INTENT_EXTRA_ADDRESS";
@@ -26,7 +27,8 @@ public class SyncClient extends IntentService {
     public static final String INTENT_EXTRA_FILE = "INTENT_EXTRA_FILE";
 
     public static final String LOG_TAG = SyncClient.class.getSimpleName();
-    private Socket mSocket;
+    private Thread mClientThread;
+    private int mState = ACTION_STOP;
 
     public SyncClient() {
         super(LOG_TAG);
@@ -36,44 +38,78 @@ public class SyncClient extends IntentService {
     protected void onHandleIntent(final Intent intent) {
         final int action = intent.getIntExtra(INTENT_EXTRA_ACTION, -1);
         Log.d(LOG_TAG, "onHandleIntent(): "+ intent.getExtras());
-        switch (action){
+        switch (action) {
             case ACTION_START:
-                String address = intent.getStringExtra(INTENT_EXTRA_ADDRESS);
-                int port = intent.getIntExtra(INTENT_EXTRA_PORT, -1);
-                try {
-                    mSocket = new Socket(InetAddress.getByName(address), port);
-                } catch (UnknownHostException e) {
-                    Log.d(LOG_TAG, "Unable to resolve address: " + address, e);
-                } catch (IOException e) {
-                    Log.d(LOG_TAG, "Unable to connect to address " + address + ":" + port, e);
-                }
-
-                try {
-                    DataInputStream dis = new DataInputStream(mSocket.getInputStream());
-                    DataOutputStream dos = new DataOutputStream(mSocket.getOutputStream());
-
-                    while (!mSocket.isClosed()) {
-                        dos.writeLong(System.currentTimeMillis());
-                        long time = dis.readLong();
-                        Log.w(LOG_TAG, "Received time: " + time);
-                    }
-
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-
+                if (ACTION_START == mState) break;
+                final String address = intent.getStringExtra(INTENT_EXTRA_ADDRESS);
+                final int port = intent.getIntExtra(INTENT_EXTRA_PORT, -1);
+                mClientThread = new Thread(new ClientEchoRunnable(address, port));
+                mClientThread.setName("ClientThread-" + address + ":" + port);
+                mClientThread.start();
+                break;
             case ACTION_STOP:
-                try {
-                    mSocket.close();
-                } catch (IOException e) {
-                    Log.d(LOG_TAG, "Unable to close connection", e);
-                }
+                if (ACTION_STOP == mState) break;
+                mClientThread.interrupt();
+                mClientThread = null;
                 stopSelf();
             case ACTION_SEND:
+                if (ACTION_SEND == mState) break;
                 final String fileUri = intent.getStringExtra(INTENT_EXTRA_FILE);
                 Log.d(LOG_TAG, "About to send file: "+ fileUri);
+        }
+        mState = action;
+    }
+
+    private static class ClientEchoRunnable implements Runnable {
+
+        private final String mAddress;
+        private final int mPort;
+        private Socket mSocket;
+
+        public ClientEchoRunnable(final String address, final int port) {
+            mAddress = address;
+            mPort = port;
+        }
+
+        @Override
+        public void run() {
+            try {
+                mSocket = new Socket(InetAddress.getByName(mAddress), mPort);
+            } catch (UnknownHostException e) {
+                Log.w(LOG_TAG, "Unable to resolve address: " + getAddress(), e);
+            } catch (IOException e) {
+                Log.w(LOG_TAG, "Unable to connect to address " + getAddress(), e);
+            }
+
+            if (mSocket.isClosed()) return;
+
+            final SocketAddress socketAddress = mSocket.getRemoteSocketAddress();
+            try {
+                DataInputStream dis = new DataInputStream(mSocket.getInputStream());
+                DataOutputStream dos = new DataOutputStream(mSocket.getOutputStream());
+
+                Log.d(LOG_TAG, "Waiting to send packets to: " + socketAddress);
+                while (!Thread.interrupted() && !mSocket.isClosed()) {
+                    dos.writeLong(System.currentTimeMillis());
+                    long time = dis.readLong();
+                    Log.d(LOG_TAG, "Received time: " + time);
+                }
+
+            } catch (IOException e) {
+                Log.e(LOG_TAG, "Unable to setup streams : " + socketAddress, e);
+            }
+
+            try {
+                mSocket.close();
+                mSocket = null;
+            } catch (IOException e) {
+                Log.e(LOG_TAG, "Unable to close socket: " + socketAddress, e);
+            }
 
         }
 
+        private String getAddress() {
+            return mAddress + ":" + mPort;
+        }
     }
 }
