@@ -6,6 +6,10 @@ import android.content.Intent;
 import android.net.Uri;
 import android.util.Log;
 
+import com.esotericsoftware.kryonet.Client;
+import com.esotericsoftware.kryonet.Connection;
+import com.esotericsoftware.kryonet.Listener;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -13,11 +17,15 @@ import java.net.InetAddress;
 import java.net.Socket;
 import java.net.SocketAddress;
 import java.net.UnknownHostException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Created by Filip on 2014-09-12.
  */
 public class SyncClient extends IntentService {
+
+    private Client mClient;
 
     public static class IntentBuilder {
         public static Intent start(Context c, String address, int port){
@@ -40,7 +48,8 @@ public class SyncClient extends IntentService {
         }
     }
 
-    private static final int ACTION_START = 10;
+    public static final int SAMPLES = 10;
+    private static final int ACTION_START = SAMPLES;
     private static final int ACTION_STOP = 100;
     private static final int ACTION_SEND = 1000;
 
@@ -50,9 +59,6 @@ public class SyncClient extends IntentService {
     private static final String INTENT_EXTRA_FILE = "INTENT_EXTRA_FILE";
 
     private static final String LOG_TAG = SyncClient.class.getSimpleName();
-
-    private Thread mClientThread;
-    private int mState = ACTION_STOP;
 
     public SyncClient() {
         super(LOG_TAG);
@@ -64,81 +70,49 @@ public class SyncClient extends IntentService {
         Log.d(LOG_TAG, "onHandleIntent(): "+ intent.getExtras());
         switch (action) {
             case ACTION_START:
-                if (ACTION_START == mState) break;
                 final String address = intent.getStringExtra(INTENT_EXTRA_ADDRESS);
-                final int port = intent.getIntExtra(INTENT_EXTRA_PORT, -1);
-                mClientThread = new Thread(new ClientEchoRunnable(this, address, port));
-                mClientThread.setName("ClientThread-" + address + ":" + port);
-                mClientThread.start();
+                mClient = new Client();
+                mClient.getKryo().register(NetworkActions.RTTFrame.class);
+                try {
+                    mClient.connect(5000, address, 54885, 54887);
+                } catch (IOException e) {
+                    sendBroadcast(LaunchActivity.Message.onDisconnected(e.getMessage()));
+                }
                 break;
             case ACTION_STOP:
-                if (ACTION_STOP == mState) break;
-                mClientThread.interrupt();
-                mClientThread = null;
+                mClient.close();
+                break;
             case ACTION_SEND:
-                if (ACTION_SEND == mState) break;
-                final String fileUri = intent.getStringExtra(INTENT_EXTRA_FILE);
-                Log.d(LOG_TAG, "About to send file: "+ fileUri);
-        }
-        mState = action;
-    }
+                final AtomicLong sum = new AtomicLong(0);
+                final AtomicLong count = new AtomicLong(0);
 
-    private static class ClientEchoRunnable implements Runnable {
-
-        private SyncClient mSyncClient;
-        private final String mAddress;
-        private final int mPort;
-        private Socket mSocket;
-
-        public ClientEchoRunnable(final SyncClient syncClient, final String address, final int port) {
-            mSyncClient = syncClient;
-            mAddress = address;
-            mPort = port;
-        }
-
-        @Override
-        public void run() {
-            mSyncClient.sendBroadcast(LaunchActivity.Message.onConnected("Connected"));
-            try {
-                mSocket = new Socket(InetAddress.getByName(mAddress), mPort);
-            } catch (UnknownHostException e) {
-                Log.w(LOG_TAG, "Unable to resolve address: " + getAddress(), e);
-            } catch (IOException e) {
-                Log.w(LOG_TAG, "Unable to connect to address " + getAddress(), e);
-            }
-
-            if (mSocket.isClosed()) return;
-
-            final SocketAddress socketAddress = mSocket.getRemoteSocketAddress();
-            try {
-                DataInputStream dis = new DataInputStream(mSocket.getInputStream());
-                DataOutputStream dos = new DataOutputStream(mSocket.getOutputStream());
-
-                Log.d(LOG_TAG, "Waiting to send packets to: " + socketAddress);
-                while (!Thread.interrupted() && !mSocket.isClosed()) {
-                    int samples = dis.readInt();
-                    for (int i = 0; i < samples; i++) {
-                        long time = dis.readLong();
-                        dos.writeLong(time);
-                        dos.flush();
+                Listener listener = new Listener() {
+                    public void received(Connection connection, Object object) {
+                        if (object instanceof NetworkActions.RTTFrame) {
+                            NetworkActions.RTTFrame frame = new NetworkActions.RTTFrame();
+                            sum.addAndGet(System.currentTimeMillis() - frame.time);
+                            count.incrementAndGet();
+                        }
                     }
+                };
+                mClient.addListener(listener);
+
+                NetworkActions.RTTFrame rttFrame = new NetworkActions.RTTFrame();
+                for (int i = 0; i < SAMPLES; i++) {
+                    rttFrame.time = System.currentTimeMillis();
+                    mClient.sendTCP(rttFrame);
                 }
-            } catch (IOException e) {
-                Log.e(LOG_TAG, "Unable to setup streams : " + socketAddress, e);
-            }
 
-            try {
-                mSocket.close();
-                mSocket = null;
-            } catch (IOException e) {
-                Log.e(LOG_TAG, "Unable to close socket: " + socketAddress, e);
-            }
-            mSyncClient.sendBroadcast(LaunchActivity.Message.onDisconnected("Disconnected"));
-            mSyncClient = null;
-        }
+                while(count.get() < SAMPLES - 1) try {
+                    Thread.sleep(SAMPLES);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                mClient.removeListener(listener);
 
-        private String getAddress() {
-            return mAddress + ":" + mPort;
+                float avg = (sum.get() * 1.0f) / count.get();
+                sendBroadcast(LaunchActivity.Message.onSynced("samples:" + count.get(), avg));
+                break;
         }
     }
 }

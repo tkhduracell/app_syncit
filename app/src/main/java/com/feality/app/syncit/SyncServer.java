@@ -5,6 +5,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
+import com.esotericsoftware.kryonet.Client;
+import com.esotericsoftware.kryonet.Connection;
+import com.esotericsoftware.kryonet.Listener;
+import com.esotericsoftware.kryonet.Server;
+import com.esotericsoftware.kryonet.util.InputStreamSender;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -21,6 +27,9 @@ import java.util.List;
 public class SyncServer extends IntentService {
 
     private static final String LOG_TAG = SyncServer.class.getSimpleName();
+
+    private Server mServer;
+    private Client mClient;
 
     public static class IntentBuilder {
         public static Intent start(Context c, int port){
@@ -43,9 +52,6 @@ public class SyncServer extends IntentService {
     private static final int ACTION_START = 0;
     private static final int ACTION_STOP = 1;
 
-    private int mState = ACTION_STOP;
-    private Thread mAcceptThread;
-
     public SyncServer() {
         super(LOG_TAG);
     }
@@ -57,135 +63,27 @@ public class SyncServer extends IntentService {
 
         switch (action) {
             case ACTION_START:
-                if(ACTION_START == mState) break;
-                final int port = intent.getIntExtra(INTENT_EXTRA_PORT, -1);
-                mAcceptThread = new Thread(new AcceptServer(port, this));
-                mAcceptThread.setName("AcceptServer-" + port);
-                mAcceptThread.start();
+                mServer = new Server(54885, 54887);
+                mServer.getKryo().register(NetworkActions.RTTFrame.class);
+                mServer.start();
+                mServer.addListener(new Listener() {
+                    public void received (Connection connection, Object object) {
+                        if (object instanceof NetworkActions.RTTFrame) {
+                            connection.sendTCP(object);
+                        }
+                    }
+                });
                 break;
             case ACTION_STOP:
-                if(ACTION_STOP == mState) break;
-                mAcceptThread.interrupt();
-                mAcceptThread = null;
+                mServer.close();
                 break;
             default:
                 Log.wtf(LOG_TAG, "Unknown action: " + action);
                 break;
         }
-        mState = action;
     }
 
-    private static class EchoResponder implements Runnable {
-        private final Socket mSocket;
-        private SyncServer mSyncServer;
-        private final SocketAddress mRemoteSocketAddress;
+    private static class MediaPlay {
 
-        public EchoResponder(final Socket socket, final SyncServer syncServer) {
-            mSocket = socket;
-            mSyncServer = syncServer;
-            mRemoteSocketAddress = socket.getRemoteSocketAddress();
-        }
-
-        @Override
-        public void run() {
-            mSyncServer.sendBroadcast(
-                LaunchActivity.Message.onConnected(mRemoteSocketAddress.toString())
-            );
-            try {
-                DataInputStream dis = new DataInputStream(mSocket.getInputStream());
-                DataOutputStream dos = new DataOutputStream(mSocket.getOutputStream());
-
-                try {
-                    while (!Thread.interrupted() && !mSocket.isClosed()) {
-                        Log.w(LOG_TAG, "Calculating RTT");
-                        int samples = 30;
-                        long sum = 0;
-                        dos.writeInt(samples);
-                        for (int i = 0; i < samples; i++) {
-                            dos.writeLong(System.currentTimeMillis());
-                            dos.flush();
-                            long time = dis.readLong();
-                            long now = System.currentTimeMillis();
-                            sum += (now - time);
-                        }
-                        float avg = (sum * 1.0f) / samples;
-                        String msg = "RTT: avg(" + avg + " ms) across " + samples + " samples";
-                        mSyncServer.sendBroadcast(LaunchActivity.Message.onSynced(msg, avg));
-                    }
-                } catch (IOException e) {
-                    Log.e(LOG_TAG, "Unable to echo time: " + mRemoteSocketAddress, e);
-                }
-
-            } catch (IOException e) {
-                Log.e(LOG_TAG, "Unable to setup streams: " + mRemoteSocketAddress, e);
-            }
-
-            try {
-                mSocket.close();
-            } catch (IOException e) {
-                Log.e(LOG_TAG, "Unable to close socket: " + mRemoteSocketAddress, e);
-            }
-            mSyncServer.sendBroadcast(
-                LaunchActivity.Message.onDisconnected(mRemoteSocketAddress.toString())
-            );
-            mSyncServer = null;
-        }
-
-    }
-
-    private static class AcceptServer implements Runnable {
-
-        private final List<Thread> mThreadList = new ArrayList<Thread>();
-        private final int mPort;
-        private SyncServer mSyncServer;
-
-        private ServerSocket mServerSocket;
-
-        public AcceptServer(final int port, final SyncServer syncServer) {
-            mPort = port;
-            mSyncServer = syncServer;
-        }
-
-        @Override
-        public void run() {
-            if (mServerSocket != null && !mServerSocket.isClosed()) {
-                try {
-                    mServerSocket.close();
-                } catch (IOException e) {
-                    Log.e(LOG_TAG, "Unable to close running server on port: " + mPort, e);
-                }
-            }
-
-            try {
-                mServerSocket = new ServerSocket(mPort);
-            } catch (BindException e) {
-                Log.w(LOG_TAG, "Server already running on port: " + mPort);
-            } catch (IOException e) {
-                Log.e(LOG_TAG, "Unable to start server on port: " + mPort, e);
-            }
-
-            while(!Thread.interrupted() && mServerSocket != null && !mServerSocket.isClosed()) {
-                try {
-                    Log.d(LOG_TAG, "Waiting for connections: " + mServerSocket.getLocalSocketAddress());
-                    final Socket socket = mServerSocket.accept();
-                    Log.d(LOG_TAG, socket.getRemoteSocketAddress() + " connected");
-
-                    EchoResponder echoResponder = new EchoResponder(socket, mSyncServer);
-                    Thread thread = new Thread(echoResponder);
-                    thread.setName("EchoResponder: " + socket.getRemoteSocketAddress());
-                    thread.start();
-                    mThreadList.add(thread);
-                } catch (IOException e) {
-                    Log.e(LOG_TAG, "ServerSocket error accepting connection", e);
-                }
-            }
-
-            for (Thread thread : mThreadList) {
-                Log.d(LOG_TAG, "Stopping "+ thread.toString());
-                thread.interrupt();
-            }
-            mThreadList.clear();
-            mSyncServer = null;
-        }
     }
 }
