@@ -20,6 +20,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.widget.Toast;
 
+import java.net.InetAddress;
+
 
 public class LaunchActivity extends Activity implements WifiP2pActionListener {
     private static final String LOG_TAG = LaunchActivity.class.getSimpleName();
@@ -33,13 +35,11 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
     private ServiceIntentReceiver mServiceIntentReceiver;
 
     private PeerToPeerHandler mPeerToPeerHandler;
-    private DiscoveryHandler mDiscoveryHandler;
 
     private WifiP2pManager mP2PManager;
     private WifiP2pManager.Channel mChannel;
     private FragmentManager mFragmentManager;
     private ProgressDialog mProgressDialog;
-    private NsdManager mNsdManager;
 
     public <T> T get(int id, Class<T> clz){
         return clz.cast(findViewById(id));
@@ -63,7 +63,6 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
 
     private void initWifiP2PReceivers() {
         mP2PManager = WifiP2pManager.class.cast(getSystemService(WIFI_P2P_SERVICE));
-        mNsdManager = NsdManager.class.cast(getSystemService(NSD_SERVICE));
 
         //  Indicates a change in the Wi-Fi P2P status.
         mP2pIntentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
@@ -79,10 +78,11 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
 
         mChannel = mP2PManager.initialize(this, getMainLooper(), null);
 
-        Intent serverIntent = new Intent(this, SyncServer.class);
-        serverIntent.putExtra(SyncServer.INTENT_EXTRA_ACTION, SyncServer.ACTION_START);
-        serverIntent.putExtra(SyncServer.INTENT_EXTRA_PORT, DEFAULT_PORT);
-        startService(serverIntent);
+        startServer();
+    }
+
+    private void startServer() {
+        startService(SyncServer.IntentBuilder.start(this, DEFAULT_PORT));
     }
 
     /** register the BroadcastReceiver with the intent values to be matched */
@@ -99,14 +99,6 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
         //mPeerToPeerHandler.registerService();
         mPeerToPeerHandler.discoverPeers();
 
-        WifiManager wifiMan = WifiManager.class.cast(getSystemService(Context.WIFI_SERVICE));
-        WifiInfo wifiInf = wifiMan.getConnectionInfo();
-        final String macAddress = wifiInf.getMacAddress();
-
-
-        mDiscoveryHandler = new DiscoveryHandler(mNsdManager);
-        mDiscoveryHandler.registerService(macAddress.replace(":", ""));
-
         mServiceIntentReceiver = new ServiceIntentReceiver();
         registerReceiver(mServiceIntentReceiver, mServiceIntentFilter);
     }
@@ -114,31 +106,24 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
     @Override
     public void onPause() {
         mPeerToPeerHandler.tearDown();
-        mDiscoveryHandler.tearDown();
         unregisterReceiver(mPeerToPeerHandler);
         unregisterReceiver(mServiceIntentReceiver);
-
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
-        Intent serverIntent = new Intent(this, SyncServer.class);
-        serverIntent.putExtra(SyncServer.INTENT_EXTRA_ACTION, SyncServer.ACTION_STOP);
-        startService(serverIntent);
-
-        Intent clientIntent = new Intent(this, SyncClient.class);
-        clientIntent.putExtra(SyncClient.INTENT_EXTRA_ACTION, SyncClient.ACTION_STOP);
-        startService(clientIntent);
-
+        startService(SyncServer.IntentBuilder.stop(this));
+        startService(SyncClient.IntentBuilder.stop(this));
         super.onDestroy();
     }
 
     public void distributeData(final Uri uri) {
-        Intent connectIntent = new Intent(this, SyncClient.class);
-        connectIntent.putExtra(SyncClient.INTENT_EXTRA_ACTION, SyncClient.ACTION_SEND);
-        connectIntent.putExtra(SyncClient.INTENT_EXTRA_FILE, uri);
-        startService(connectIntent);
+        startService(SyncClient.IntentBuilder.send(this, uri));
+    }
+
+    public void connectServiceClientTo(InetAddress address) {
+        startService(SyncClient.IntentBuilder.start(this, address.getHostAddress(), DEFAULT_PORT));
     }
 
     @Override
@@ -151,35 +136,28 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
     }
 
     @Override
-    public void onConnectedToDevice(final WifiP2pDevice p2pDevice, final WifiP2pInfo info) {
-        mProgressDialog.setMessage(
-                "Connected to device, starting service discovery" +
-                        "\nip: " + info.groupOwnerAddress +
-                        "\nname: " + p2pDevice.deviceName +
-                        "\ngroupFormed: " + info.groupFormed +
-                        "\nmac: " + p2pDevice.deviceAddress);
-        if (info.groupFormed) {
-            mDiscoveryHandler.discoverServices(this);
-        }
-    }
-
-    @Override
     public void onConnectedToDevice(final WifiP2pInfo info) {
-        if (mProgressDialog != null) {
-            mProgressDialog.setMessage(
-                    "Connected to device, starting service discovery" +
-                            "\nip: " + info.groupOwnerAddress +
-                            "\nowner: " + info.isGroupOwner +
-                            "\ngroupFormed: " + info.groupFormed);
-        } else {
-            mProgressDialog = ProgressDialog.show(this, "Setup connection", "", true, false);
-            mProgressDialog.setMessage("Connection from external device: "+
-                                        "\nip: " + info.groupOwnerAddress +
-                                        "\nowner: " + info.isGroupOwner +
-                                        "\ngroupFormed: " + info.groupFormed);
+        if (mProgressDialog == null) {
+            mProgressDialog = ProgressDialog.show(this, "", "", true, false);
         }
+
         if (info.groupFormed) {
-            mDiscoveryHandler.discoverServices(this);
+            if (info.isGroupOwner){
+                mProgressDialog.setTitle("I´m group owner");
+                mProgressDialog.setMessage(
+                        "Waiting for incoming connection..." +
+                        "\nip: " + info.groupOwnerAddress);
+                // Wait for incoming connection
+            } else {
+                mProgressDialog.setTitle("Joined group");
+                mProgressDialog.setMessage(
+                        "Connecting to group owner..." +
+                        "\nip: " + info.groupOwnerAddress);
+                connectServiceClientTo(info.groupOwnerAddress);
+            }
+        } else {
+            mProgressDialog.setTitle("Waiting for group");
+            mProgressDialog.setMessage("Waiting for group to be formed...");
         }
     }
 

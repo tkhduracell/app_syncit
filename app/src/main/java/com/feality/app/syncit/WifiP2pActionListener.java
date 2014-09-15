@@ -10,7 +10,6 @@ import android.net.wifi.p2p.WifiP2pInfo;
 public interface WifiP2pActionListener {
     public void onDeviceSelected(final WifiP2pDevice p2pDevice);
     public void onConnectedToDevice(WifiP2pInfo wifiP2pInfo);
-    public void onConnectedToDevice(WifiP2pDevice p2pDevice, final WifiP2pInfo info);
     public void onServiceDetected(NsdServiceInfo serviceP2pDevice);
 
 }

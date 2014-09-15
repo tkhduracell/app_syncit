@@ -1,7 +1,9 @@
 package com.feality.app.syncit;
 
 import android.app.IntentService;
+import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.util.Log;
 
 import java.io.DataInputStream;
@@ -21,11 +23,26 @@ public class SyncServer extends IntentService {
 
     private static final String LOG_TAG = SyncServer.class.getSimpleName();
 
-    public static final String INTENT_EXTRA_ACTION = "INTENT_EXTRA_ACTION";
-    public static final String INTENT_EXTRA_PORT = "INTENT_EXTRA_PORT";
+    public static class IntentBuilder {
+        public static Intent start(Context c, int port){
+            Intent i = new Intent(c, SyncServer.class);
+            i.putExtra(SyncServer.INTENT_EXTRA_ACTION, SyncServer.ACTION_START);
+            i.putExtra(SyncServer.INTENT_EXTRA_PORT, port);
+            return i;
+        }
+        public static Intent stop(Context c) {
+            Intent i = new Intent(c, SyncServer.class);
+            i.putExtra(SyncServer.INTENT_EXTRA_ACTION, SyncServer.ACTION_STOP);
+            return i;
+        }
+    }
 
-    public static final int ACTION_START = 0;
-    public static final int ACTION_STOP = 1;
+
+    private static final String INTENT_EXTRA_ACTION = "INTENT_EXTRA_ACTION";
+    private static final String INTENT_EXTRA_PORT = "INTENT_EXTRA_PORT";
+
+    private static final int ACTION_START = 0;
+    private static final int ACTION_STOP = 1;
 
     private int mState = ACTION_STOP;
     private Thread mAcceptThread;
@@ -43,13 +60,14 @@ public class SyncServer extends IntentService {
             case ACTION_START:
                 if(ACTION_START == mState) break;
                 final int port = intent.getIntExtra(INTENT_EXTRA_PORT, -1);
-                mAcceptThread = new Thread(new AcceptService(port, this));
-                mAcceptThread.setName("AcceptService-" + port);
+                mAcceptThread = new Thread(new AcceptServer(port, this));
+                mAcceptThread.setName("AcceptServer-" + port);
                 mAcceptThread.start();
                 break;
             case ACTION_STOP:
                 if(ACTION_STOP == mState) break;
-                stopSelf();
+                mAcceptThread.interrupt();
+                mAcceptThread = null;
                 break;
             default:
                 Log.wtf(LOG_TAG, "Unknown action: " + action);
@@ -58,26 +76,21 @@ public class SyncServer extends IntentService {
         mState = action;
     }
 
-    @Override
-    public void onDestroy() {
-        mAcceptThread.interrupt();
-        mAcceptThread = null;
-        mState = ACTION_START;
-        super.onDestroy();
-    }
-
     public void sendMessage(String msg) {
+        Log.d(LOG_TAG, "Sending message: "+msg);
         Intent intent = new Intent(LaunchActivity.ServiceIntentReceiver.ACTION_ON_CONNECTION);
         intent.putExtra(LaunchActivity.ServiceIntentReceiver.EXTRA_MESSAGE, msg);
         sendBroadcast(intent);
     }
 
-    private static class EchoServiceRunnable implements Runnable {
+    private static class EchoResponder implements Runnable {
         private final Socket mSocket;
+        private SyncServer mSyncServer;
         private final SocketAddress mRemoteSocketAddress;
 
-        public EchoServiceRunnable(final Socket socket) {
+        public EchoResponder(final Socket socket, final SyncServer syncServer) {
             mSocket = socket;
+            mSyncServer = syncServer;
             mRemoteSocketAddress = socket.getRemoteSocketAddress();
         }
 
@@ -89,9 +102,19 @@ public class SyncServer extends IntentService {
 
                 try {
                     while (!Thread.interrupted() && !mSocket.isClosed()) {
-                        long time = dis.readLong();
-                        Log.w(LOG_TAG, "Received time: " + time);
-                        dos.writeLong(System.currentTimeMillis());
+                        Log.w(LOG_TAG, "Calculating RTT");
+                        int samples = 30;
+                        long sum = 0;
+                        dos.writeInt(samples);
+                        for (int i = 0; i < samples; i++) {
+                            dos.writeLong(System.currentTimeMillis());
+                            dos.flush();
+                            long time = dis.readLong();
+                            long now = System.currentTimeMillis();
+                            sum += (now - time);
+                        }
+                        String msg = "RTT: avg(" + (sum * 1.0f) / samples + " ms) across " + samples + " samples";
+                        mSyncServer.sendMessage(msg);
                     }
                 } catch (IOException e) {
                     Log.e(LOG_TAG, "Unable to echo time: " + mRemoteSocketAddress, e);
@@ -106,12 +129,12 @@ public class SyncServer extends IntentService {
             } catch (IOException e) {
                 Log.e(LOG_TAG, "Unable to close socket: " + mRemoteSocketAddress, e);
             }
-
+            mSyncServer = null;
         }
 
     }
 
-    private static class AcceptService implements Runnable {
+    private static class AcceptServer implements Runnable {
 
         private final List<Thread> mThreadList = new ArrayList<Thread>();
         private final int mPort;
@@ -119,14 +142,14 @@ public class SyncServer extends IntentService {
 
         private ServerSocket mServerSocket;
 
-        public AcceptService(final int port, final SyncServer syncServer) {
+        public AcceptServer(final int port, final SyncServer syncServer) {
             mPort = port;
             mSyncServer = syncServer;
         }
 
         @Override
         public void run() {
-            mSyncServer.sendMessage("AcceptService started!");
+            mSyncServer.sendMessage("AcceptServer started!");
             if (mServerSocket != null && !mServerSocket.isClosed()) {
                 try {
                     mServerSocket.close();
@@ -146,12 +169,11 @@ public class SyncServer extends IntentService {
             while(!Thread.interrupted() && mServerSocket != null && !mServerSocket.isClosed()) {
                 try {
                     mSyncServer.sendMessage("Waiting for connections on " + mServerSocket.getLocalSocketAddress());
-                    Log.d(LOG_TAG, "Waiting for connections on " + mServerSocket.getLocalSocketAddress());
                     final Socket socket = mServerSocket.accept();
                     mSyncServer.sendMessage("Got connections " + socket.getRemoteSocketAddress());
-                    EchoServiceRunnable echoServiceRunnable = new EchoServiceRunnable(socket);
-                    Thread thread = new Thread(echoServiceRunnable);
-                    thread.setName("EchoService: " + socket.getRemoteSocketAddress());
+                    EchoResponder echoResponder = new EchoResponder(socket, mSyncServer);
+                    Thread thread = new Thread(echoResponder);
+                    thread.setName("EchoResponder: " + socket.getRemoteSocketAddress());
                     thread.start();
                     mThreadList.add(thread);
                 } catch (IOException e) {
@@ -164,6 +186,7 @@ public class SyncServer extends IntentService {
                 thread.interrupt();
             }
             mThreadList.clear();
+            mSyncServer = null;
         }
     }
 }

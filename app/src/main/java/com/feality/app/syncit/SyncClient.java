@@ -1,7 +1,9 @@
 package com.feality.app.syncit;
 
 import android.app.IntentService;
+import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.util.Log;
 
 import java.io.DataInputStream;
@@ -17,16 +19,38 @@ import java.net.UnknownHostException;
  */
 public class SyncClient extends IntentService {
 
-    public static final int ACTION_START = 10;
-    public static final int ACTION_STOP = 100;
-    public static final int ACTION_SEND = 1000;
+    public static class IntentBuilder {
+        public static Intent start(Context c, String address, int port){
+            Intent i = new Intent(c, SyncClient.class);
+            i.putExtra(SyncClient.INTENT_EXTRA_ACTION, SyncClient.ACTION_START);
+            i.putExtra(SyncClient.INTENT_EXTRA_ADDRESS, address);
+            i.putExtra(SyncClient.INTENT_EXTRA_PORT, port);
+            return i;
+        }
+        public static Intent stop(Context c) {
+            Intent i = new Intent(c, SyncClient.class);
+            i.putExtra(SyncClient.INTENT_EXTRA_ACTION, SyncClient.ACTION_STOP);
+            return i;
+        }
+        public static Intent send(Context c, Uri file) {
+            Intent i = new Intent(c, SyncClient.class);
+            i.putExtra(SyncClient.INTENT_EXTRA_ACTION, SyncClient.ACTION_SEND);
+            i.putExtra(SyncClient.INTENT_EXTRA_FILE, file);
+            return i;
+        }
+    }
 
-    public static final String INTENT_EXTRA_ACTION = "INTENT_EXTRA_ACTION";
-    public static final String INTENT_EXTRA_ADDRESS = "INTENT_EXTRA_ADDRESS";
-    public static final String INTENT_EXTRA_PORT = "INTENT_EXTRA_PORT";
-    public static final String INTENT_EXTRA_FILE = "INTENT_EXTRA_FILE";
+    private static final int ACTION_START = 10;
+    private static final int ACTION_STOP = 100;
+    private static final int ACTION_SEND = 1000;
 
-    public static final String LOG_TAG = SyncClient.class.getSimpleName();
+    private static final String INTENT_EXTRA_ACTION = "INTENT_EXTRA_ACTION";
+    private static final String INTENT_EXTRA_ADDRESS = "INTENT_EXTRA_ADDRESS";
+    private static final String INTENT_EXTRA_PORT = "INTENT_EXTRA_PORT";
+    private static final String INTENT_EXTRA_FILE = "INTENT_EXTRA_FILE";
+
+    private static final String LOG_TAG = SyncClient.class.getSimpleName();
+
     private Thread mClientThread;
     private int mState = ACTION_STOP;
 
@@ -43,7 +67,7 @@ public class SyncClient extends IntentService {
                 if (ACTION_START == mState) break;
                 final String address = intent.getStringExtra(INTENT_EXTRA_ADDRESS);
                 final int port = intent.getIntExtra(INTENT_EXTRA_PORT, -1);
-                mClientThread = new Thread(new ClientEchoRunnable(address, port));
+                mClientThread = new Thread(new ClientEchoRunnable(this, address, port));
                 mClientThread.setName("ClientThread-" + address + ":" + port);
                 mClientThread.start();
                 break;
@@ -51,7 +75,6 @@ public class SyncClient extends IntentService {
                 if (ACTION_STOP == mState) break;
                 mClientThread.interrupt();
                 mClientThread = null;
-                stopSelf();
             case ACTION_SEND:
                 if (ACTION_SEND == mState) break;
                 final String fileUri = intent.getStringExtra(INTENT_EXTRA_FILE);
@@ -60,13 +83,22 @@ public class SyncClient extends IntentService {
         mState = action;
     }
 
+    public void sendMessage(String msg) {
+        Log.d(LOG_TAG, "Sending message: "+msg);
+        Intent intent = new Intent(LaunchActivity.ServiceIntentReceiver.ACTION_ON_CONNECTION);
+        intent.putExtra(LaunchActivity.ServiceIntentReceiver.EXTRA_MESSAGE, msg);
+        sendBroadcast(intent);
+    }
+
     private static class ClientEchoRunnable implements Runnable {
 
+        private SyncClient mSyncClient;
         private final String mAddress;
         private final int mPort;
         private Socket mSocket;
 
-        public ClientEchoRunnable(final String address, final int port) {
+        public ClientEchoRunnable(final SyncClient syncClient, final String address, final int port) {
+            mSyncClient = syncClient;
             mAddress = address;
             mPort = port;
         }
@@ -90,9 +122,13 @@ public class SyncClient extends IntentService {
 
                 Log.d(LOG_TAG, "Waiting to send packets to: " + socketAddress);
                 while (!Thread.interrupted() && !mSocket.isClosed()) {
-                    dos.writeLong(System.currentTimeMillis());
-                    long time = dis.readLong();
-                    Log.d(LOG_TAG, "Received time: " + time);
+                    int samples = dis.readInt();
+                    for (int i = 0; i < samples; i++) {
+                        long time = dis.readLong();
+                        dos.writeLong(time);
+                        dos.flush();
+                    }
+                    mSyncClient.sendMessage("Echoed "+ samples +" samples to server");
                 }
 
             } catch (IOException e) {
@@ -105,7 +141,7 @@ public class SyncClient extends IntentService {
             } catch (IOException e) {
                 Log.e(LOG_TAG, "Unable to close socket: " + socketAddress, e);
             }
-
+            mSyncClient = null;
         }
 
         private String getAddress() {

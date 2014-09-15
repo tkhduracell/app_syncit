@@ -8,6 +8,7 @@ import android.net.wifi.WpsInfo;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
+import android.net.wifi.p2p.WifiP2pGroup;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo;
@@ -26,10 +27,13 @@ import java.util.TimerTask;
 /**
  * Created by Filip on 2014-09-14.
  */
-public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManager.PeerListListener, WifiP2pManager.ConnectionInfoListener {
+public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManager.PeerListListener {
     private static final String LOG_TAG = PeerToPeerHandler.class.getSimpleName();
+    public static final int PEER_UPDATE_PERIOD = 30000;
 
     private final List<WifiP2pDevice> mPeers = new ArrayList<WifiP2pDevice>();
+    private boolean mPauseDiscovery = false;
+
     private final WifiP2pUiListener mWifiP2pUiListener;
     private final WifiP2pManager mWifiP2pManager;
     private final WifiP2pManager.Channel mChannel;
@@ -83,8 +87,6 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
                 mWifiP2pManager.requestPeers(mChannel, this);
             }
 
-            Log.d(LOG_TAG, "WIFI_P2P_PEERS_CHANGED_ACTION - P2P peers changed, requesting peers");
-
         } else if (WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)) {
 
             // Connection state changed!  We should probably do something about that
@@ -98,22 +100,24 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
                     intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO)
             );
 
-            if (networkInfo.isConnected()) {
+            if (wifiP2pInfo.groupFormed && networkInfo.isConnected()) {
                 // We are connected with the other device, request connection
                 // info to find group owner IP
                 Log.w(LOG_TAG, "NetworkInfo we are connected!");
+                mPauseDiscovery = true;
                 mWifiP2pActionListener.onConnectedToDevice(wifiP2pInfo);
             } else {
                 // Reset stuff
                 Log.w(LOG_TAG, "NetworkInfo we are NOT connected!");
+                mPauseDiscovery = false;
             }
 
             Log.d(LOG_TAG, String.valueOf(wifiP2pInfo));
             Log.d(LOG_TAG, String.valueOf(networkInfo));
 
         } else if (WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION.equals(action)) {
-            Log.d(LOG_TAG, "WIFI_P2P_THIS_DEVICE_CHANGED_ACTION");
 
+            Log.d(LOG_TAG, "WIFI_P2P_THIS_DEVICE_CHANGED_ACTION");
         }
     }
 
@@ -122,9 +126,10 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
         mTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
-                mWifiP2pManager.discoverPeers(mChannel, new DebugListener("discoverPeers"));
+                if (mPauseDiscovery) return;
+                mWifiP2pManager.discoverPeers(mChannel, new DebugListener("discoverPeers(p=10sec)"));
             }
-        }, 100, 10000);
+        }, 100, PEER_UPDATE_PERIOD);
     }
 
     @Override
@@ -134,31 +139,12 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
 
         boolean isEqual = mPeers.containsAll(deviceList) && deviceList.containsAll(mPeers);
 
-        Log.d(LOG_TAG, "Wifi-Direct: found " + nbrPeers + " peers, updating: " + !isEqual);
+        Log.d(LOG_TAG, "PeerList: size=" + nbrPeers + ", wasUpdated?=" + !isEqual);
 
         if (!isEqual) {
             mPeers.clear();
             mPeers.addAll(deviceList);
             mWifiP2pUiListener.updatePeerList(mPeers);
-        }
-    }
-
-    @Override
-    public void onConnectionInfoAvailable(final WifiP2pInfo info) {
-        Log.d(LOG_TAG, "onConnectionInfoAvailable: " + info.toString());
-        // After the group negotiation, we can determine the group owner.
-        if (info.groupFormed && info.isGroupOwner) {
-            // Do whatever tasks are specific to the group owner.
-            // One common case is creating a server thread and accepting
-            // incoming connections.
-            //mWifiP2pActionListener.onGroupOwnerAvailable(info);
-        } else if (info.groupFormed) {
-            // The other device acts as the client. In this case,
-            // you'll want to create a client thread that connects to the group
-            // owner.
-            //mWifiP2pActionListener.onGroupOwnerAvailable(info);
-        } else {
-            // No group yet
         }
     }
 
@@ -182,31 +168,36 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
                     Log.d(LOG_TAG, "Failed to connect to "+device+ ", device busy");
                 } else {
                     Log.d(LOG_TAG, "Failed to connect to "+device + ", reason:" +  reason);
+                    retryConnection(p2pDevice);
                 }
             }
         });
     }
 
-    private void onConnected(final WifiP2pDevice p2pDevice) {
-        mTimer.cancel();
-        mWifiP2pManager.stopPeerDiscovery(mChannel, new DebugListener("stopPeerDiscovery after connection success"));
+    private void retryConnection(final WifiP2pDevice p2pDevice) {
+        mTimer.schedule(new TimerTask() {
+            @Override
+            public void run() {
+                mWifiP2pManager.cancelConnect(mChannel, new DebugListener("cancelConnect"));
+                connectToP2pDevice(p2pDevice);
+            }
+        }, 5000);
+    }
 
+    private void onConnected(final WifiP2pDevice p2pDevice) {
+        mPauseDiscovery = true;
         mWifiP2pManager.requestConnectionInfo(mChannel, new WifiP2pManager.ConnectionInfoListener() {
             @Override
             public void onConnectionInfoAvailable(final WifiP2pInfo info) {
                 Log.d(LOG_TAG, "Requested ConnectionInfo=" + info);
-                mWifiP2pActionListener.onConnectedToDevice(p2pDevice, info);
+                if (info.groupFormed) {
+                    mWifiP2pActionListener.onConnectedToDevice(info);
+                } else {
+                    final WifiP2pManager.ConnectionInfoListener listener = this;
+                    retryConnection(p2pDevice);
+                }
             }
         });
-
-        /*
-        mWifiP2pManager.requestGroupInfo(mChannel, new WifiP2pManager.GroupInfoListener() {
-            @Override
-            public void onGroupInfoAvailable(final WifiP2pGroup group) {
-                mWifiP2pActionListener.onGroupAvailable(group);
-            }
-        });
-        */
     }
 
     public void registerService() {
@@ -272,7 +263,16 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
     public void tearDown() {
         if (mWifiP2pManager == null) return;
 
+        mPauseDiscovery = true;
         mTimer.cancel();
+
+        try {
+            mWifiP2pManager.cancelConnect(mChannel, new DebugListener("cancelConnect"));
+        } catch (IllegalArgumentException ignored) {} //No connection running
+
+        try {
+            mWifiP2pManager.removeGroup(mChannel, new DebugListener("removeGroup"));
+        } catch (IllegalArgumentException ignored) {} //No group running
 
         try {
             mWifiP2pManager.stopPeerDiscovery(mChannel, new DebugListener("stopPeerDiscovery"));
