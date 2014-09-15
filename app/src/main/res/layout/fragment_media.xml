@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-              android:orientation="vertical"
+            xmlns:ProgressWheel="http://schemas.android.com/apk/res-auto"
               android:layout_width="match_parent"
               android:layout_height="match_parent">
 
@@ -26,16 +26,24 @@
         android:layout_alignParentLeft="true"
         android:layout_alignParentStart="true"/>
 
-    <com.todddavies.components.progressbar.ProgressWheel
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:id="@+id/media_pw_spinner"
-        android:layout_centerVertical="true"
-        android:layout_centerHorizontal="true"
-        android:layout_alignParentStart="true"
-        android:layout_alignParentEnd="true"
-        android:layout_alignParentLeft="true"
-        android:layout_alignParentRight="true"
-        android:minHeight="200dp"
-        android:minWidth="200dp"/>
+    <LinearLayout
+        android:gravity="center"
+        android:orientation="vertical"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <com.todddavies.components.progressbar.ProgressWheel
+            android:id="@+id/media_pw_spinner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            ProgressWheel:text="..."
+            ProgressWheel:textColor="@color/not_really_black"
+            ProgressWheel:textSize="16sp"
+            ProgressWheel:spinSpeed="1.4dp"
+            ProgressWheel:barLength="20dp"
+            ProgressWheel:barWidth="10dp"
+            ProgressWheel:rimWidth="1dp"
+            ProgressWheel:barColor="@color/holo_blue"
+            ProgressWheel:rimColor="@color/holo_blue_light" />
+    </LinearLayout>
 </RelativeLayout>

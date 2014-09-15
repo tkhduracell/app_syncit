@@ -1,4 +1,4 @@
-package com.feality.app.syncit;
+package com.feality.app.syncit.fragments;
 
 import android.app.Activity;
 import android.content.Context;
@@ -15,6 +15,9 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.ViewSwitcher;
 
+import com.feality.app.syncit.LaunchActivity;
+import com.feality.app.syncit.R;
+import com.feality.app.syncit.WifiP2pUiListener;
 import com.todddavies.components.progressbar.ProgressWheel;
 
 import java.util.ArrayList;

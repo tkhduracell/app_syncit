@@ -1,4 +1,4 @@
-package com.feality.app.syncit;
+package com.feality.app.syncit.fragments;
 
 import android.app.Fragment;
 import android.view.View;

@@ -14,7 +14,12 @@ import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Bundle;
-import android.widget.Toast;
+
+import com.esotericsoftware.minlog.Log;
+import com.feality.app.syncit.fragments.DiscoveryFragment;
+import com.feality.app.syncit.fragments.MediaFragment;
+import com.feality.app.syncit.net.NetworkSyncService;
+import com.feality.app.syncit.net.PeerToPeerHandler;
 
 import java.net.InetAddress;
 
@@ -24,8 +29,6 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
 
     private static final String FRAGMENT_DISCOVERY = "fragment_discovery";
     private static final String FRAGMENT_MEDIA = "fragment_media";
-
-    public static final int DEFAULT_PORT = 8081;
 
     private final IntentFilter mP2pIntentFilter = new IntentFilter();
     private final IntentFilter mServiceIntentFilter = new IntentFilter();
@@ -55,14 +58,26 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
         showDiscoveryFragment();
 
         initWifiP2PReceivers();
+
+        Log.set(Log.LEVEL_TRACE);
+        startService(NetworkSyncService.Message.startServer(this));
     }
 
     private void showDiscoveryFragment() {
+        final Fragment fragment = Fragment.instantiate(this, DiscoveryFragment.class.getName());
         mFragmentManager
             .beginTransaction()
-            .replace(R.id.main_fragment_placeholder, Fragment.instantiate(this, DiscoveryFragment.class.getName()), FRAGMENT_DISCOVERY)
+            .replace(R.id.main_fragment_placeholder, fragment, FRAGMENT_DISCOVERY)
             .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
             .commit();
+    }
+
+    private void showMediaFragment() {
+        Fragment sm = MediaFragment.instantiate(this, MediaFragment.class.getName());
+        mFragmentManager.beginTransaction()
+                .replace(R.id.main_fragment_placeholder, sm, FRAGMENT_MEDIA)
+                .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
+                .commit();
     }
 
     private void initWifiP2PReceivers() {
@@ -80,15 +95,11 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
         // Indicates that a client have connected
         mServiceIntentFilter.addAction(MessageReceiver.ACTION_ON_CONNECTED);
         mServiceIntentFilter.addAction(MessageReceiver.ACTION_ON_DISCONNECTED);
-        mServiceIntentFilter.addAction(MessageReceiver.ACTION_ON_SYNCED);
+        mServiceIntentFilter.addAction(MessageReceiver.ACTION_ON_RTT);
 
         mChannel = mP2PManager.initialize(this, getMainLooper(), null);
 
-        startServer();
-    }
-
-    private void startServer() {
-        startService(SyncServer.IntentBuilder.start(this, DEFAULT_PORT));
+        mMessageReceiver = new MessageReceiver();
     }
 
     /** register the BroadcastReceiver with the intent values to be matched */
@@ -99,22 +110,20 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
         mDiscoveryFragment = DiscoveryFragment.class.cast(
             mFragmentManager.findFragmentByTag(FRAGMENT_DISCOVERY)
         );
+
         mMediaFragment = MediaFragment.class.cast(
             mFragmentManager.findFragmentByTag(FRAGMENT_MEDIA)
         );
 
         mPeerToPeerHandler = new PeerToPeerHandler(mP2PManager, mChannel, mDiscoveryFragment, this);
-        registerReceiver(mPeerToPeerHandler, mP2pIntentFilter);
-        //mPeerToPeerHandler.registerService();
         mPeerToPeerHandler.discoverPeers();
 
-        mMessageReceiver = new MessageReceiver();
+        registerReceiver(mPeerToPeerHandler, mP2pIntentFilter);
         registerReceiver(mMessageReceiver, mServiceIntentFilter);
     }
 
     @Override
     public void onPause() {
-        mPeerToPeerHandler.tearDown();
         unregisterReceiver(mPeerToPeerHandler);
         unregisterReceiver(mMessageReceiver);
         mDiscoveryFragment = null;
@@ -124,17 +133,14 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
 
     @Override
     protected void onDestroy() {
-        startService(SyncServer.IntentBuilder.stop(this));
-        startService(SyncClient.IntentBuilder.stop(this));
+        mPeerToPeerHandler.tearDown();
+        startService(NetworkSyncService.Message.stopServer(this));
+        startService(NetworkSyncService.Message.disconnectClient(this));
         super.onDestroy();
     }
 
     public void distributeData(final Uri uri) {
-        startService(SyncClient.IntentBuilder.send(this, uri));
-    }
-
-    public void connectServiceClientTo(InetAddress address) {
-        startService(SyncClient.IntentBuilder.start(this, address.getHostAddress(), DEFAULT_PORT));
+        startService(NetworkSyncService.Message.sendFile(this, uri));
     }
 
     @Override
@@ -149,22 +155,25 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
     @Override
     public void onConnectedToDevice(final WifiP2pInfo info) {
         if (mProgressDialog == null) {
-            mProgressDialog = ProgressDialog.show(this, "", "", true, false);
+            mProgressDialog = ProgressDialog.show(this, "Initializing",
+                    "Initializing network components", true, false);
         }
 
         if (info.groupFormed) {
             if (info.isGroupOwner){
-                mProgressDialog.setTitle("I´m group owner");
+                mProgressDialog.setTitle("Hosting Wifi-Direct group");
                 mProgressDialog.setMessage(
                         "Waiting for incoming connection..." +
                         "\nip: " + info.groupOwnerAddress);
                 // Wait for incoming connection
+
             } else {
-                mProgressDialog.setTitle("Joined group");
+                mProgressDialog.setTitle("Joining Wifi-Direct group");
                 mProgressDialog.setMessage(
                         "Connecting to group owner..." +
-                        "\nip: " + info.groupOwnerAddress);
-                connectServiceClientTo(info.groupOwnerAddress);
+                                "\nip: " + info.groupOwnerAddress);
+                final String address = info.groupOwnerAddress.getHostAddress();
+                startService(NetworkSyncService.Message.connectClient(this, address));
             }
         } else {
             mProgressDialog.setTitle("Waiting for group");
@@ -174,6 +183,10 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
 
     @Override
     public void onDisconnected() {
+        dismissProgressDialog();
+    }
+
+    private void dismissProgressDialog() {
         if (mProgressDialog != null && mProgressDialog.isShowing()){
             mProgressDialog.dismiss();
             mProgressDialog = null;
@@ -188,44 +201,28 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
                 "Connecting to device " + name, true, false);
     }
 
-
-    private void showMediaFragment() {
-        Fragment sm = MediaFragment.instantiate(this, MediaFragment.class.getName());
-        mFragmentManager.beginTransaction()
-                .replace(R.id.main_fragment_placeholder, sm, FRAGMENT_MEDIA)
-                .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
-                .commit();
-    }
-
     public static class Message {
 
-        public static Intent onDisconnected(String msg) {
-            return baseMessage(MessageReceiver.ACTION_ON_DISCONNECTED, msg);
+        public static Intent onDisconnected() {
+            return new Intent(MessageReceiver.ACTION_ON_DISCONNECTED);
         }
 
-        public static Intent onConnected(String msg) {
-            return baseMessage(MessageReceiver.ACTION_ON_CONNECTED, msg);
+        public static Intent onConnected() {
+            return new Intent(MessageReceiver.ACTION_ON_CONNECTED);
         }
 
-        public static Intent onSynced(String msg, float msAvgRtt) {
-            Intent i = baseMessage(MessageReceiver.ACTION_ON_SYNCED, msg);
-            i.putExtra(MessageReceiver.EXTRA_AVG_RTT, msAvgRtt);
-            return i;
-        }
-
-        private static Intent baseMessage(final String action, final String msg) {
-            Intent i = new Intent(action);
-            i.putExtra(MessageReceiver.EXTRA_MESSAGE, msg);
+        public static Intent onRttCalculated(long rttMs) {
+            Intent i = new Intent(MessageReceiver.ACTION_ON_RTT);
+            i.putExtra(MessageReceiver.EXTRA_AVG_RTT, rttMs);
             return i;
         }
     }
 
     private class MessageReceiver extends BroadcastReceiver {
 
-        private final static String ACTION_ON_CONNECTED = "MessageReceiver.ON_CONNECTED";
-        private final static String ACTION_ON_DISCONNECTED = "MessageReceiver.ON_DISCONNECTED";
-
-        private final static String ACTION_ON_SYNCED = "MessageReceiver.ON_SYNCED";
+        private final static String ACTION_ON_CONNECTED = "MessageReceiver.ACTION_ON_CONNECTED";
+        private final static String ACTION_ON_DISCONNECTED = "MessageReceiver.ACTION_ON_DISCONNECTED";
+        private final static String ACTION_ON_RTT = "MessageReceiver.ACTION_ON_RTT";
 
         private final static String EXTRA_MESSAGE = "MessageReceiver.EXTRA_MESSAGE";
         private final static String EXTRA_AVG_RTT = "MessageReceiver.EXTRA_AVG_RTT";
@@ -234,17 +231,21 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
         public void onReceive(final Context context, final Intent intent) {
             String action = intent.getAction();
 
-            String message = intent.getStringExtra(EXTRA_MESSAGE);
             float rtt = intent.getFloatExtra(EXTRA_AVG_RTT, 0);
             if (ACTION_ON_CONNECTED.equals(action)) {
+                android.util.Log.w(LOG_TAG, "ACTION_ON_CONNECTED");
                 showMediaFragment();
+                dismissProgressDialog();
             }
 
             if (ACTION_ON_DISCONNECTED.equals(action)) {
+                android.util.Log.w(LOG_TAG, "ACTION_ON_DISCONNECTED");
                 showDiscoveryFragment();
+                dismissProgressDialog();
             }
 
-            if (ACTION_ON_SYNCED.equals(action) && mMediaFragment != null) {
+            if (ACTION_ON_RTT.equals(action) && mMediaFragment != null) {
+                android.util.Log.w(LOG_TAG, "ACTION_ON_RTT");
                 mMediaFragment.showRoundTripTime(rtt);
             }
         }

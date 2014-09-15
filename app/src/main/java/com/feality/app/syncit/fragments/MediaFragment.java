@@ -1,5 +1,7 @@
-package com.feality.app.syncit;
+package com.feality.app.syncit.fragments;
 
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.Intent;
 import android.media.MediaPlayer;
@@ -9,12 +11,16 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.feality.app.syncit.LaunchActivity;
+import com.feality.app.syncit.R;
 import com.todddavies.components.progressbar.ProgressWheel;
 
+import java.io.File;
 import java.io.IOException;
 
 /**
@@ -41,7 +47,10 @@ public class MediaFragment extends SmarterFragment {
         View v = inflater.inflate(R.layout.fragment_media, container, false);
 
         mProgressWheel = get(v, R.id.media_pw_spinner, ProgressWheel.class);
-        mProgressWheel.spin();
+        mProgressWheel.setText("Select a file");
+        if(!mProgressWheel.isSpinning()){
+            mProgressWheel.spin();
+        }
 
         mTitleView = get(v, R.id.media_title, TextView.class);
 
@@ -101,11 +110,25 @@ public class MediaFragment extends SmarterFragment {
             Uri uri = data.getData();
             Log.d(LOG_TAG, "Selected file: " + uri.toString());
 
+            File f = new File(uri.getPath());
+            long size = f.length();
+
+            mProgressWheel.setText("Transferring file (" + size / 1024 + " KB)");
+            mProgressWheel.clearAnimation();
+
+            ObjectAnimator animation = ObjectAnimator.ofInt(mProgressWheel, "progress", 0, 360);
+            animation.setInterpolator(new AccelerateDecelerateInterpolator());
+            animation.setRepeatMode(ValueAnimator.REVERSE);
+            animation.setRepeatCount(ValueAnimator.INFINITE);
+            animation.setDuration(5000); // 5 seconds
+            animation.start();
+
+            /*
             try {
                 onFileSelected(uri);
             } catch (IOException e) {
                 mProgressWheel.setText("Unable to play track");
-            }
+            }*/
         }
         super.onActivityResult(requestCode, resultCode, data);
     }

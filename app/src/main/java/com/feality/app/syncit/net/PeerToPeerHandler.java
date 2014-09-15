@@ -1,4 +1,4 @@
-package com.feality.app.syncit;
+package com.feality.app.syncit.net;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -8,13 +8,16 @@ import android.net.wifi.WpsInfo;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
-import android.net.wifi.p2p.WifiP2pGroup;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest;
 import android.os.Build;
 import android.util.Log;
+
+import com.feality.app.syncit.LaunchActivity;
+import com.feality.app.syncit.WifiP2pActionListener;
+import com.feality.app.syncit.WifiP2pUiListener;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -32,6 +35,8 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
     public static final int PEER_UPDATE_PERIOD = 30000;
 
     private final List<WifiP2pDevice> mPeers = new ArrayList<WifiP2pDevice>();
+
+    private boolean mDiscoveryRunning = false;
     private boolean mPauseDiscovery = false;
 
     private final WifiP2pUiListener mWifiP2pUiListener;
@@ -39,8 +44,8 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
     private final WifiP2pManager.Channel mChannel;
     private final WifiP2pActionListener mWifiP2pActionListener;
     private final WifiP2pConfig mConnectedConfig = new WifiP2pConfig();
-    private final Timer mTimer;
 
+    private final Timer mTimer;
     private WifiP2pDnsSdServiceRequest mServiceRequest;
     private WifiP2pDnsSdServiceInfo mServiceInfo;
 
@@ -67,8 +72,9 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
                     "WIFI_STATE_ENABLED",
                     "WIFI_STATE_UNKNOWN"
             };
-
-            mWifiP2pUiListener.showWifiStateChange(state, wifiStates[state]);
+            if (mWifiP2pUiListener != null) {
+                mWifiP2pUiListener.showWifiStateChange(state, wifiStates[state]);
+            }
 
             Log.d(LOG_TAG, "WIFI_P2P_STATE_CHANGED_ACTION");
         } else if (WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(action)) {
@@ -113,8 +119,8 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
                 mWifiP2pActionListener.onDisconnected();
             }
 
-            Log.d(LOG_TAG, String.valueOf(wifiP2pInfo));
-            Log.d(LOG_TAG, String.valueOf(networkInfo));
+            // Log.d(LOG_TAG, String.valueOf(wifiP2pInfo));
+            // Log.d(LOG_TAG, String.valueOf(networkInfo));
 
         } else if (WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION.equals(action)) {
 
@@ -123,14 +129,17 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
     }
 
     public void discoverPeers() {
-        mWifiP2pUiListener.onDiscoveringPeers();
+        mDiscoveryRunning = true;
+        if (mWifiP2pUiListener != null) {
+            mWifiP2pUiListener.onDiscoveringPeers();
+        }
         mTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() {
                 if (mPauseDiscovery) return;
                 mWifiP2pManager.discoverPeers(mChannel, new DebugListener("discoverPeers(p=10sec)"));
             }
-        }, 100, PEER_UPDATE_PERIOD);
+        }, 500, PEER_UPDATE_PERIOD);
     }
 
     @Override
@@ -204,7 +213,7 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
     public void registerService() {
         //  Create a string map containing information about your service.
         Map record = new HashMap();
-        record.put("listenport", String.valueOf(LaunchActivity.DEFAULT_PORT));
+        record.put("listenport", String.valueOf(8081));
         record.put("buddyname", "John Doe" + (int) (Math.random() * 1000));
         record.put("available", "visible");
 

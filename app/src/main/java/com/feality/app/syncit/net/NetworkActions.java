@@ -1,4 +1,4 @@
-package com.feality.app.syncit;
+package com.feality.app.syncit.net;
 
 /**
  * Created by Filip on 2014-09-15.

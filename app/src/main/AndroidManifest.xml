@@ -28,7 +28,7 @@
         </activity>
 
         <service
-            android:name=".SyncServer"
+            android:name=".net.NetworkSyncService"
             android:exported="false"/>
 
         <service
