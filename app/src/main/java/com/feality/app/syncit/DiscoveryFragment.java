@@ -2,28 +2,21 @@ package com.feality.app.syncit;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.Intent;
-import android.media.MediaPlayer;
-import android.net.Uri;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.os.Bundle;
-import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
-import android.widget.Button;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 import android.widget.ViewSwitcher;
 
 import com.todddavies.components.progressbar.ProgressWheel;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -38,11 +31,11 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
     public static final int CHILD_SECOND = 1;
 
     private ListView mListView;
+    private TextView mTitleView;
     private ViewSwitcher mViewSwitcher;
     private ProgressWheel mProgressWheel;
     private PeerListAdapter mPeerListAdapter;
     private LaunchActivity mActivity;
-    private TextView mTitleView;
 
     @Override
     public View onCreateView(final LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -78,13 +71,19 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
         super.onAttach(activity);
     }
 
+    private boolean disconnected = false;
     @Override
     public void showWifiStateChange(int state, String stateText) {
         if (state == 2 || state == 3) {
-            // We are cool
+            if(disconnected) {
+                mProgressWheel.spin();
+                mProgressWheel.setText(getString(R.string.waiting_for_peers));
+                disconnected = false;
+            }
         } else {
+            disconnected = true;
             mViewSwitcher.setDisplayedChild(CHILD_FIRST);
-            mProgressWheel.setText(stateText);
+            mProgressWheel.setText("Enable wifi!");
             mProgressWheel.stopSpinning();
         }
     }

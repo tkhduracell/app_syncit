@@ -5,7 +5,6 @@ import android.content.Intent;
 import android.util.Log;
 
 import java.io.DataInputStream;
-import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.BindException;
@@ -24,6 +23,7 @@ public class SyncServer extends IntentService {
 
     public static final String INTENT_EXTRA_ACTION = "INTENT_EXTRA_ACTION";
     public static final String INTENT_EXTRA_PORT = "INTENT_EXTRA_PORT";
+
     public static final int ACTION_START = 0;
     public static final int ACTION_STOP = 1;
 
@@ -43,7 +43,7 @@ public class SyncServer extends IntentService {
             case ACTION_START:
                 if(ACTION_START == mState) break;
                 final int port = intent.getIntExtra(INTENT_EXTRA_PORT, -1);
-                mAcceptThread = new Thread(new AcceptService(port));
+                mAcceptThread = new Thread(new AcceptService(port, this));
                 mAcceptThread.setName("AcceptService-" + port);
                 mAcceptThread.start();
                 break;
@@ -64,6 +64,12 @@ public class SyncServer extends IntentService {
         mAcceptThread = null;
         mState = ACTION_START;
         super.onDestroy();
+    }
+
+    public void sendMessage(String msg) {
+        Intent intent = new Intent(LaunchActivity.ServiceIntentReceiver.ACTION_ON_CONNECTION);
+        intent.putExtra(LaunchActivity.ServiceIntentReceiver.EXTRA_MESSAGE, msg);
+        sendBroadcast(intent);
     }
 
     private static class EchoServiceRunnable implements Runnable {
@@ -109,15 +115,18 @@ public class SyncServer extends IntentService {
 
         private final List<Thread> mThreadList = new ArrayList<Thread>();
         private final int mPort;
+        private SyncServer mSyncServer;
 
         private ServerSocket mServerSocket;
 
-        public AcceptService(final int port) {
+        public AcceptService(final int port, final SyncServer syncServer) {
             mPort = port;
+            mSyncServer = syncServer;
         }
 
         @Override
         public void run() {
+            mSyncServer.sendMessage("AcceptService started!");
             if (mServerSocket != null && !mServerSocket.isClosed()) {
                 try {
                     mServerSocket.close();
@@ -134,10 +143,12 @@ public class SyncServer extends IntentService {
                 Log.e(LOG_TAG, "Unable to start server on port: " + mPort, e);
             }
 
-            while(!Thread.interrupted() && mServerSocket!= null && !mServerSocket.isClosed()) {
+            while(!Thread.interrupted() && mServerSocket != null && !mServerSocket.isClosed()) {
                 try {
+                    mSyncServer.sendMessage("Waiting for connections on " + mServerSocket.getLocalSocketAddress());
                     Log.d(LOG_TAG, "Waiting for connections on " + mServerSocket.getLocalSocketAddress());
                     final Socket socket = mServerSocket.accept();
+                    mSyncServer.sendMessage("Got connections " + socket.getRemoteSocketAddress());
                     EchoServiceRunnable echoServiceRunnable = new EchoServiceRunnable(socket);
                     Thread thread = new Thread(echoServiceRunnable);
                     thread.setName("EchoService: " + socket.getRemoteSocketAddress());
