@@ -110,6 +110,7 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
                 // Reset stuff
                 Log.w(LOG_TAG, "NetworkInfo we are NOT connected!");
                 mPauseDiscovery = false;
+                mWifiP2pActionListener.onDisconnected();
             }
 
             Log.d(LOG_TAG, String.valueOf(wifiP2pInfo));

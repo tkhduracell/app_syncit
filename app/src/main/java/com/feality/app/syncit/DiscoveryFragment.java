@@ -125,13 +125,6 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
         mViewSwitcher.setDisplayedChild(CHILD_FIRST);
     }
 
-    public void showError(String err) {
-        final ProgressWheel progressWheel = get(R.id.discovery_pw_spinner, ProgressWheel.class);
-        progressWheel.stopSpinning();
-        progressWheel.setProgress(0);
-        progressWheel.setText(err);
-    }
-
     @Override
     public void onItemClick(final AdapterView<?> parent, final View view, final int position, final long id) {
         final WifiP2pDevice p2pDevice = mPeerListAdapter.getItem(position);
@@ -141,16 +134,6 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
         get(view, R.id.inflate_peer_item_progress, ProgressBar.class).setIndeterminate(true);
 
         mActivity.onDeviceSelected(p2pDevice);
-
-        /*
-        progressBar.clearAnimation();
-        ObjectAnimator animation = ObjectAnimator.ofInt(progressBar, "progress", 0, progressBar.getMax());
-        animation.setDuration(1000); // 1 second
-        animation.setInterpolator(new AccelerateDecelerateInterpolator());
-        animation.setRepeatMode(ValueAnimator.REVERSE);
-        animation.setRepeatCount(ValueAnimator.INFINITE);
-        animation.start();
-        */
     }
 
 

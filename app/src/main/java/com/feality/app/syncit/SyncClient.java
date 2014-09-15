@@ -83,13 +83,6 @@ public class SyncClient extends IntentService {
         mState = action;
     }
 
-    public void sendMessage(String msg) {
-        Log.d(LOG_TAG, "Sending message: "+msg);
-        Intent intent = new Intent(LaunchActivity.ServiceIntentReceiver.ACTION_ON_CONNECTION);
-        intent.putExtra(LaunchActivity.ServiceIntentReceiver.EXTRA_MESSAGE, msg);
-        sendBroadcast(intent);
-    }
-
     private static class ClientEchoRunnable implements Runnable {
 
         private SyncClient mSyncClient;
@@ -105,6 +98,7 @@ public class SyncClient extends IntentService {
 
         @Override
         public void run() {
+            mSyncClient.sendBroadcast(LaunchActivity.Message.onConnected("Connected"));
             try {
                 mSocket = new Socket(InetAddress.getByName(mAddress), mPort);
             } catch (UnknownHostException e) {
@@ -128,9 +122,7 @@ public class SyncClient extends IntentService {
                         dos.writeLong(time);
                         dos.flush();
                     }
-                    mSyncClient.sendMessage("Echoed "+ samples +" samples to server");
                 }
-
             } catch (IOException e) {
                 Log.e(LOG_TAG, "Unable to setup streams : " + socketAddress, e);
             }
@@ -141,6 +133,7 @@ public class SyncClient extends IntentService {
             } catch (IOException e) {
                 Log.e(LOG_TAG, "Unable to close socket: " + socketAddress, e);
             }
+            mSyncClient.sendBroadcast(LaunchActivity.Message.onDisconnected("Disconnected"));
             mSyncClient = null;
         }
 

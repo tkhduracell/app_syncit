@@ -3,7 +3,6 @@ package com.feality.app.syncit;
 import android.app.IntentService;
 import android.content.Context;
 import android.content.Intent;
-import android.net.Uri;
 import android.util.Log;
 
 import java.io.DataInputStream;
@@ -76,13 +75,6 @@ public class SyncServer extends IntentService {
         mState = action;
     }
 
-    public void sendMessage(String msg) {
-        Log.d(LOG_TAG, "Sending message: "+msg);
-        Intent intent = new Intent(LaunchActivity.ServiceIntentReceiver.ACTION_ON_CONNECTION);
-        intent.putExtra(LaunchActivity.ServiceIntentReceiver.EXTRA_MESSAGE, msg);
-        sendBroadcast(intent);
-    }
-
     private static class EchoResponder implements Runnable {
         private final Socket mSocket;
         private SyncServer mSyncServer;
@@ -96,6 +88,9 @@ public class SyncServer extends IntentService {
 
         @Override
         public void run() {
+            mSyncServer.sendBroadcast(
+                LaunchActivity.Message.onConnected(mRemoteSocketAddress.toString())
+            );
             try {
                 DataInputStream dis = new DataInputStream(mSocket.getInputStream());
                 DataOutputStream dos = new DataOutputStream(mSocket.getOutputStream());
@@ -113,8 +108,9 @@ public class SyncServer extends IntentService {
                             long now = System.currentTimeMillis();
                             sum += (now - time);
                         }
-                        String msg = "RTT: avg(" + (sum * 1.0f) / samples + " ms) across " + samples + " samples";
-                        mSyncServer.sendMessage(msg);
+                        float avg = (sum * 1.0f) / samples;
+                        String msg = "RTT: avg(" + avg + " ms) across " + samples + " samples";
+                        mSyncServer.sendBroadcast(LaunchActivity.Message.onSynced(msg, avg));
                     }
                 } catch (IOException e) {
                     Log.e(LOG_TAG, "Unable to echo time: " + mRemoteSocketAddress, e);
@@ -129,6 +125,9 @@ public class SyncServer extends IntentService {
             } catch (IOException e) {
                 Log.e(LOG_TAG, "Unable to close socket: " + mRemoteSocketAddress, e);
             }
+            mSyncServer.sendBroadcast(
+                LaunchActivity.Message.onDisconnected(mRemoteSocketAddress.toString())
+            );
             mSyncServer = null;
         }
 
@@ -149,7 +148,6 @@ public class SyncServer extends IntentService {
 
         @Override
         public void run() {
-            mSyncServer.sendMessage("AcceptServer started!");
             if (mServerSocket != null && !mServerSocket.isClosed()) {
                 try {
                     mServerSocket.close();
@@ -168,9 +166,10 @@ public class SyncServer extends IntentService {
 
             while(!Thread.interrupted() && mServerSocket != null && !mServerSocket.isClosed()) {
                 try {
-                    mSyncServer.sendMessage("Waiting for connections on " + mServerSocket.getLocalSocketAddress());
+                    Log.d(LOG_TAG, "Waiting for connections: " + mServerSocket.getLocalSocketAddress());
                     final Socket socket = mServerSocket.accept();
-                    mSyncServer.sendMessage("Got connections " + socket.getRemoteSocketAddress());
+                    Log.d(LOG_TAG, socket.getRemoteSocketAddress() + " connected");
+
                     EchoResponder echoResponder = new EchoResponder(socket, mSyncServer);
                     Thread thread = new Thread(echoResponder);
                     thread.setName("EchoResponder: " + socket.getRemoteSocketAddress());
