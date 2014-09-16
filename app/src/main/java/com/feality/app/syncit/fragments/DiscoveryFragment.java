@@ -75,6 +75,7 @@ public class DiscoveryFragment extends SmarterFragment implements WifiP2pUiListe
     }
 
     private boolean disconnected = false;
+
     @Override
     public void showWifiStateChange(int state, String stateText) {
         if (state == 2 || state == 3) {

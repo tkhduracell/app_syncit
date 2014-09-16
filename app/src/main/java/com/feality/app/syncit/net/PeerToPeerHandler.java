@@ -154,11 +154,15 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
         if (!isEqual) {
             mPeers.clear();
             mPeers.addAll(deviceList);
-            mWifiP2pUiListener.updatePeerList(mPeers);
+            if (mWifiP2pUiListener != null) {
+                mWifiP2pUiListener.updatePeerList(mPeers);
+            }
         }
     }
 
     public void connectToP2pDevice(final WifiP2pDevice p2pDevice) {
+        mPauseDiscovery = true;
+        mWifiP2pManager.stopPeerDiscovery(mChannel, new DebugListener("stopPeerDiscovery() due to connection"));
         mConnectedConfig.deviceAddress = p2pDevice.deviceAddress;
         mConnectedConfig.wps.setup = WpsInfo.PBC;
         final String device = String.format("%s (%s)", p2pDevice.deviceAddress, p2pDevice.deviceName);
@@ -203,74 +207,14 @@ public class PeerToPeerHandler extends BroadcastReceiver implements WifiP2pManag
                 if (info.groupFormed) {
                     mWifiP2pActionListener.onConnectedToDevice(info);
                 } else {
-                    final WifiP2pManager.ConnectionInfoListener listener = this;
                     retryConnection(p2pDevice);
                 }
             }
         });
     }
 
-    public void registerService() {
-        //  Create a string map containing information about your service.
-        Map record = new HashMap();
-        record.put("listenport", String.valueOf(8081));
-        record.put("buddyname", "John Doe" + (int) (Math.random() * 1000));
-        record.put("available", "visible");
-
-        // Service information.  Pass it an instance name, service type
-        // _protocol._transportlayer , and the map containing
-        // information other devices will want once they connect to this one.
-        mServiceInfo = WifiP2pDnsSdServiceInfo.newInstance("_syncit_dnssd", "_presence._tcp", record);
-
-        // Add the local service, sending the service info, network channel,
-        // and listener that will be used to indicate success or failure of
-        // the request.
-        mWifiP2pManager.addLocalService(mChannel, mServiceInfo, new DebugListener("addLocalService"));
-    }
-
-    final HashMap<String, String> buddies = new HashMap<String, String>();
-
-    public void startServiceDiscovery() {
-        WifiP2pManager.DnsSdTxtRecordListener txtListener = new WifiP2pManager.DnsSdTxtRecordListener() {
-            @Override
-                /* Callback includes:
-                 * fullDomain: full domain name: e.g "printer._ipp._tcp.local."
-                 * record: TXT record dta as a map of key/value pairs.
-                 * device: The device running the advertised service.
-                 */
-            public void onDnsSdTxtRecordAvailable(String fullDomain, Map record, WifiP2pDevice device) {
-                Log.d(LOG_TAG, "DnsSdTxtRecord:" + fullDomain + ", " + record.toString());
-                buddies.put(device.deviceAddress, fullDomain);
-            }
-        };
-
-        WifiP2pManager.DnsSdServiceResponseListener servListener = new WifiP2pManager.DnsSdServiceResponseListener() {
-            @Override
-            public void onDnsSdServiceAvailable(String instanceName, String registrationType,
-                                                WifiP2pDevice resourceType) {
-
-                // Update the device name with the human-friendly version from
-                // the DnsTxtRecord, assuming one arrived.
-                resourceType.deviceName =
-                        buddies.containsKey(resourceType.deviceAddress) ?
-                                buddies.get(resourceType.deviceAddress) :
-                                resourceType.deviceName;
-
-
-                //mWifiP2pActionListener.onServiceDetected(resourceType);
-
-                Log.d(LOG_TAG, "onBonjourServiceAvailable: " + instanceName);
-            }
-        };
-
-        mWifiP2pManager.setDnsSdResponseListeners(mChannel, servListener, txtListener);
-
-        mServiceRequest = WifiP2pDnsSdServiceRequest.newInstance();
-        mWifiP2pManager.addServiceRequest(mChannel, mServiceRequest, new DebugListener("addServiceRequest"));
-        mWifiP2pManager.discoverServices(mChannel, new DebugListener("discoverServices"));
-    }
-
     public void tearDown() {
+        Log.e(LOG_TAG, "Tearing down connections!");
         if (mWifiP2pManager == null) return;
 
         mPauseDiscovery = true;

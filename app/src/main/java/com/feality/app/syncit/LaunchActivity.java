@@ -64,7 +64,10 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
     }
 
     private void showDiscoveryFragment() {
-        final Fragment fragment = Fragment.instantiate(this, DiscoveryFragment.class.getName());
+        Fragment fragment = mFragmentManager.findFragmentByTag(FRAGMENT_DISCOVERY);
+        if (fragment == null) {
+            fragment = Fragment.instantiate(this, DiscoveryFragment.class.getName());
+        }
         mFragmentManager
             .beginTransaction()
             .replace(R.id.main_fragment_placeholder, fragment, FRAGMENT_DISCOVERY)
@@ -73,11 +76,15 @@ public class LaunchActivity extends Activity implements WifiP2pActionListener {
     }
 
     private void showMediaFragment() {
-        Fragment sm = MediaFragment.instantiate(this, MediaFragment.class.getName());
-        mFragmentManager.beginTransaction()
-                .replace(R.id.main_fragment_placeholder, sm, FRAGMENT_MEDIA)
-                .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
-                .commit();
+        Fragment fragment = mFragmentManager.findFragmentByTag(FRAGMENT_MEDIA);
+        if (fragment == null) {
+            fragment = MediaFragment.instantiate(this, MediaFragment.class.getName());
+        }
+        mFragmentManager
+            .beginTransaction()
+            .replace(R.id.main_fragment_placeholder, fragment, FRAGMENT_MEDIA)
+            .setCustomAnimations(android.R.anim.fade_in, android.R.anim.fade_out)
+            .commit();
     }
 
     private void initWifiP2PReceivers() {

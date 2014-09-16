@@ -21,6 +21,8 @@ import com.feality.app.syncit.R;
 import com.todddavies.components.progressbar.ProgressWheel;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 
 /**
@@ -110,18 +112,39 @@ public class MediaFragment extends SmarterFragment {
             Uri uri = data.getData();
             Log.d(LOG_TAG, "Selected file: " + uri.toString());
 
+
             File f = new File(uri.getPath());
             long size = f.length();
+            try {
+                FileInputStream fis = new FileInputStream(f);
+                size = Math.max(fis.available(), size);
+            } catch (Exception e) {
+                Log.e(LOG_TAG, "Unable to get file size", e);
+            }
 
-            mProgressWheel.setText("Transferring file (" + size / 1024 + " KB)");
             mProgressWheel.clearAnimation();
 
-            ObjectAnimator animation = ObjectAnimator.ofInt(mProgressWheel, "progress", 0, 360);
-            animation.setInterpolator(new AccelerateDecelerateInterpolator());
-            animation.setRepeatMode(ValueAnimator.REVERSE);
-            animation.setRepeatCount(ValueAnimator.INFINITE);
-            animation.setDuration(5000); // 5 seconds
-            animation.start();
+            ObjectAnimator animation0 = ObjectAnimator.ofInt(mProgressWheel, "progress", 0, 360);
+            animation0.setInterpolator(new AccelerateDecelerateInterpolator());
+            animation0.setRepeatMode(ValueAnimator.REVERSE);
+            animation0.setRepeatCount(ValueAnimator.INFINITE);
+            animation0.setDuration(5000); // 5 seconds
+            animation0.start();
+
+            final int fileSize = (int) (size / 1024);
+            ValueAnimator animation1 = ValueAnimator.ofInt(0, fileSize);
+            animation1.setInterpolator(new AccelerateDecelerateInterpolator());
+            animation1.setRepeatMode(ValueAnimator.REVERSE);
+            animation1.setRepeatCount(ValueAnimator.INFINITE);
+            animation1.setDuration(5000); // 5 seconds
+            animation1.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                @Override
+                public void onAnimationUpdate(final ValueAnimator animation) {
+                    int i = (Integer) animation.getAnimatedValue();
+                    mProgressWheel.setText("Transferring file (" + i + " KB)");
+                }
+            });
+            animation1.start();
 
             /*
             try {
